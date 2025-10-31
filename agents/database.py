@@ -76,7 +76,42 @@ class HistoryDatabase:
                 CREATE INDEX IF NOT EXISTS idx_users_email 
                 ON users(email)
             """)
-
+            
+            # Таблица рейтингов AI моделей
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ai_model_rankings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,
+                    model_name TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    source_id INTEGER,
+                    notes TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(category, model_name)
+                )
+            """)
+            
+            # Таблица доверенных источников
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS trusted_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    data_type TEXT,
+                    reliability TEXT,
+                    format TEXT,
+                    last_checked_at TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Индексы для рейтингов
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_rankings_category 
+                ON ai_model_rankings(category, rank)
+            """)
+            
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
     
@@ -359,6 +394,170 @@ class HistoryDatabase:
             )
             conn.commit()
             return cursor.rowcount
+
+    # ============================================
+    # AI Model Rankings
+    # ============================================
+
+    def add_ranking(
+        self,
+        category: str,
+        model_name: str,
+        rank: int,
+        score: float,
+        source_id: Optional[int] = None,
+        notes: Optional[str] = None
+    ) -> int:
+        """
+        Добавить или обновить рейтинг модели
+        
+        Args:
+            category: Категория (reasoning, coding, vision, etc.)
+            model_name: Название модели
+            rank: Позиция в рейтинге
+            score: Оценка/score модели
+            source_id: ID источника данных
+            notes: Дополнительные заметки
+        
+        Returns:
+            ID записи
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO ai_model_rankings 
+                (category, model_name, rank, score, source_id, notes, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(category, model_name) 
+                DO UPDATE SET 
+                    rank = excluded.rank,
+                    score = excluded.score,
+                    source_id = excluded.source_id,
+                    notes = excluded.notes,
+                    updated_at = excluded.updated_at
+            """, (
+                category, model_name, rank, score, source_id, notes,
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_all_rankings(self) -> Dict[str, List[Dict]]:
+        """
+        Получить все рейтинги, сгруппированные по категориям
+        
+        Returns:
+            Dict с ключами-категориями и списками моделей
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM ai_model_rankings 
+                ORDER BY category, rank
+            """)
+            rows = cursor.fetchall()
+            
+            rankings = {}
+            for row in rows:
+                category = row['category']
+                if category not in rankings:
+                    rankings[category] = []
+                rankings[category].append(dict(row))
+            
+            return rankings
+
+    def get_rankings_by_category(self, category: str, limit: int = 3) -> List[Dict]:
+        """
+        Получить рейтинги для конкретной категории
+        
+        Args:
+            category: Категория (reasoning, coding, etc.)
+            limit: Количество моделей (default: 3)
+        
+        Returns:
+            Список моделей отсортированных по rank
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM ai_model_rankings 
+                WHERE category = ?
+                ORDER BY rank
+                LIMIT ?
+            """, (category, limit))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_top_models(self, limit: int = 5) -> List[Dict]:
+        """
+        Получить топ модели по всем категориям
+        
+        Args:
+            limit: Количество моделей на категорию
+        
+        Returns:
+            Список моделей
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM ai_model_rankings 
+                WHERE rank <= ?
+                ORDER BY category, rank
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def add_trusted_source(
+        self,
+        name: str,
+        url: str,
+        data_type: Optional[str] = None,
+        reliability: Optional[str] = None,
+        format: Optional[str] = None
+    ) -> int:
+        """
+        Добавить доверенный источник данных
+        
+        Returns:
+            ID созданной записи
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT OR IGNORE INTO trusted_sources 
+                (name, url, data_type, reliability, format)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name, url, data_type, reliability, format))
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_source_check_time(self, source_id: int) -> int:
+        """
+        Обновить время последней проверки источника
+        
+        Returns:
+            Количество обновлённых строк
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                UPDATE trusted_sources
+                SET last_checked_at = ?
+                WHERE id = ?
+            """, (datetime.now().isoformat(), source_id))
+            conn.commit()
+            return cursor.rowcount
+
+    def get_trusted_sources(self) -> List[Dict]:
+        """
+        Получить список всех доверенных источников
+        
+        Returns:
+            Список источников
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM trusted_sources 
+                ORDER BY name
+            """)
+            return [dict(row) for row in cursor.fetchall()]
 
 
 # Singleton instance
