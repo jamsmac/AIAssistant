@@ -1,0 +1,78 @@
+2025-10-30 14:00:00,070 - INFO - ============================================================
+2025-10-30 14:00:00,071 - INFO - 🚀 Starting AI Models Rankings Update
+2025-10-30 14:00:00,071 - INFO - ⏰ Time: 2025-10-30 14:00:00
+2025-10-30 14:00:00,071 - INFO - ============================================================
+2025-10-30 14:00:00,071 - INFO - Database initialized at /Users/js/autopilot-core/data/history.db
+2025-10-30 14:00:00,072 - INFO - Initialized 5 trusted sources
+2025-10-30 14:00:00,072 - INFO - 
+📊 Collecting rankings from sources...
+2025-10-30 14:00:00,072 - INFO - Starting rankings collection...
+2025-10-30 14:00:00,439 - WARNING - HF API returned 404, using fallback
+2025-10-30 14:00:00,445 - INFO - Updated 3 reasoning rankings
+2025-10-30 14:00:00,449 - INFO - Updated 3 coding rankings
+2025-10-30 14:00:00,452 - INFO - Updated 3 vision rankings
+2025-10-30 14:00:00,861 - WARNING - Arena API returned 404, using fallback
+2025-10-30 14:00:00,868 - INFO - Updated 3 chat rankings
+2025-10-30 14:00:00,872 - INFO - Updated 3 agents rankings
+2025-10-30 14:00:00,875 - INFO - Updated 3 translation rankings
+2025-10-30 14:00:00,878 - INFO - Updated 3 local rankings
+2025-10-30 14:00:00,878 - INFO - ✅ Collected 21 rankings across 7 categories
+2025-10-30 14:00:00,878 - INFO - 
+✅ Collection complete:
+2025-10-30 14:00:00,878 - INFO -    Total models updated: 21
+2025-10-30 14:00:00,878 - INFO -    - reasoning: 3 models
+2025-10-30 14:00:00,878 - INFO -    - coding: 3 models
+2025-10-30 14:00:00,878 - INFO -    - vision: 3 models
+2025-10-30 14:00:00,878 - INFO -    - chat: 3 models
+2025-10-30 14:00:00,878 - INFO -    - agents: 3 models
+2025-10-30 14:00:00,878 - INFO -    - translation: 3 models
+2025-10-30 14:00:00,878 - INFO -    - local: 3 models
+2025-10-30 14:00:00,878 - INFO - 
+🔍 Checking for new leaders...
+2025-10-30 14:00:00,879 - INFO - 
+📱 Sending notification...
+2025-10-30 14:00:00,880 - INFO - Telegram credentials not found, skipping notification
+2025-10-30 14:00:00,880 - INFO - 
+============================================================
+2025-10-30 14:00:00,880 - INFO - ✅ Update completed successfully!
+2025-10-30 14:00:00,880 - INFO - ============================================================
+
+2025-10-30 14:01:22,519 - INFO - ============================================================
+2025-10-30 14:01:22,519 - INFO - 🚀 Starting AI Models Rankings Update
+2025-10-30 14:01:22,519 - INFO - ⏰ Time: 2025-10-30 14:01:22
+2025-10-30 14:01:22,519 - INFO - ============================================================
+2025-10-30 14:01:22,519 - INFO - Database initialized at /Users/js/autopilot-core/data/history.db
+2025-10-30 14:01:22,521 - INFO - Initialized 5 trusted sources
+2025-10-30 14:01:22,521 - INFO - 
+📊 Collecting rankings from sources...
+2025-10-30 14:01:22,521 - INFO - Starting rankings collection...
+2025-10-30 14:01:23,050 - WARNING - HF API returned 404, using fallback
+2025-10-30 14:01:23,057 - INFO - Updated 3 reasoning rankings
+2025-10-30 14:01:23,062 - INFO - Updated 3 coding rankings
+2025-10-30 14:01:23,066 - INFO - Updated 3 vision rankings
+2025-10-30 14:01:23,304 - WARNING - Arena API returned 404, using fallback
+2025-10-30 14:01:23,309 - INFO - Updated 3 chat rankings
+2025-10-30 14:01:23,314 - INFO - Updated 3 agents rankings
+2025-10-30 14:01:23,316 - INFO - Updated 3 translation rankings
+2025-10-30 14:01:23,319 - INFO - Updated 3 local rankings
+2025-10-30 14:01:23,319 - INFO - ✅ Collected 21 rankings across 7 categories
+2025-10-30 14:01:23,319 - INFO - 
+✅ Collection complete:
+2025-10-30 14:01:23,319 - INFO -    Total models updated: 21
+2025-10-30 14:01:23,320 - INFO -    - reasoning: 3 models
+2025-10-30 14:01:23,320 - INFO -    - coding: 3 models
+2025-10-30 14:01:23,320 - INFO -    - vision: 3 models
+2025-10-30 14:01:23,320 - INFO -    - chat: 3 models
+2025-10-30 14:01:23,320 - INFO -    - agents: 3 models
+2025-10-30 14:01:23,320 - INFO -    - translation: 3 models
+2025-10-30 14:01:23,320 - INFO -    - local: 3 models
+2025-10-30 14:01:23,320 - INFO - 
+🔍 Checking for new leaders...
+2025-10-30 14:01:23,322 - INFO - 
+📱 Sending notification...
+2025-10-30 14:01:23,322 - INFO - Telegram credentials not found, skipping notification
+2025-10-30 14:01:23,322 - INFO - 
+============================================================
+2025-10-30 14:01:23,322 - INFO - ✅ Update completed successfully!
+2025-10-30 14:01:23,322 - INFO - ============================================================
+

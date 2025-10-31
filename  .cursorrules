@@ -1,0 +1,152 @@
+# AI Development System - Cursor Project Rules
+
+You are working on an AI-powered development system with Python backend (FastAPI) and Next.js frontend.
+
+## Project Structure
+- agents/ - Python modules (database, AI router, models)
+- api/ - FastAPI backend server
+- app/ - Next.js 14 pages (App Router)
+- scripts/ - Utility scripts
+- data/ - SQLite database
+
+## Code Style
+
+### Python (Backend)
+- Use type hints for all functions
+- Docstrings in Google style
+- Error handling with try/except
+- Logging with logger.info/warning/error
+- Database: context manager pattern
+```python
+with sqlite3.connect(self.db_path) as conn:
+    conn.row_factory = sqlite3.Row
+    # query here
+```
+
+### TypeScript (Frontend)
+- 'use client' only when needed (state/hooks)
+- Async/await for API calls
+- Error handling with try/catch
+- Loading states for all async operations
+```typescript
+const [loading, setLoading] = useState(false)
+try {
+  setLoading(true)
+  const res = await fetch(...)
+  // handle response
+} catch (error) {
+  console.error(error)
+} finally {
+  setLoading(false)
+}
+```
+
+### Styling
+- TailwindCSS utility classes only
+- Dark theme: bg-gray-900, text-white
+- Gradients: from-blue-500 to-purple-500
+- Rounded: rounded-xl, rounded-2xl
+- Spacing: p-4, p-6, gap-3, gap-4
+
+## API Endpoints Pattern
+```python
+@app.post("/api/endpoint")
+async def endpoint_name(request: RequestModel):
+    """
+    Short description
+    
+    Args:
+        request: description
+    
+    Returns:
+        response format
+    """
+    try:
+        db = get_db()
+        # logic
+        return {"success": True, "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+## Database Methods Pattern
+```python
+def get_something(self, param: str) -> List[Dict]:
+    """Get something from database"""
+    with sqlite3.connect(self.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute("SELECT * FROM table WHERE col = ?", (param,))
+        return [dict(row) for row in cursor.fetchall()]
+```
+
+## Common Tasks
+
+### Add new API endpoint:
+1. Define Pydantic model at top of api/server.py
+2. Create @app.method decorator function
+3. Add try/except error handling
+4. Test with curl or /docs
+
+### Add database method:
+1. Add method to HistoryDatabase class in agents/database.py
+2. Use with sqlite3.connect pattern
+3. Return List[Dict] with dict(row)
+4. Add to __init__ if needed
+
+### Add new page:
+1. Create app/page-name/page.tsx
+2. Export default function PageName()
+3. Use TailwindCSS for styling
+4. Add to navigation if needed
+
+## Current Features
+- AI model ranking system (7 categories)
+- Smart model routing with fallback
+- Request caching (920x speedup)
+- Rate limiting per model
+- Streaming responses (SSE)
+- Session memory with context
+- Performance analytics
+
+## Commands
+```bash
+# Backend
+cd ~/autopilot-core
+source venv/bin/activate
+python api/server.py
+
+# Frontend
+cd ~/autopilot-core
+npm run dev
+
+# Tests
+python -c "from agents.database import get_db; db = get_db(); print(db.get_cache_stats())"
+```
+
+## Important Files
+- agents/database.py - All database operations
+- agents/ai_router.py - Model selection logic
+- api/server.py - All API endpoints
+- app/chat/page.tsx - Chat interface
+- app/models-ranking/page.tsx - Rankings UI
+
+## When making changes:
+1. Always read the file first (use view tool)
+2. Use str_replace for precise edits
+3. Test the change with provided command
+4. Show expected output
+
+## Error Prevention
+- Never use localStorage in React (session storage or state)
+- Always validate API inputs
+- Handle errors gracefully with user feedback
+- Rate limits: check before bulk operations
+- Cache: clear old entries periodically
+
+## Response Format
+When user asks to create/modify code:
+1. Show the code changes
+2. Explain what it does
+3. Provide test command
+4. Show expected output
+5. Ask for confirmation
