@@ -1,0 +1,86 @@
+# AI Development System - Cursor Project Rules
+
+You are working on an AI-powered development system with Python backend (FastAPI) and Next.js frontend.
+
+## Project Structure
+- agents/ - Python modules (database, AI router, models)
+- api/ - FastAPI backend server
+- app/ - Next.js 14 pages (App Router)
+- scripts/ - Utility scripts
+- data/ - SQLite database
+
+## Code Style
+
+### Python (Backend)
+- Use type hints for all functions
+- Docstrings in Google style
+- Error handling with try/except
+- Logging with logger.info/warning/error
+- Database: context manager pattern
+
+### TypeScript (Frontend)
+- 'use client' only when needed (state/hooks)
+- Async/await for API calls
+- Error handling with try/catch
+- Loading states for all async operations
+
+### Styling
+- TailwindCSS utility classes only
+- Dark theme: bg-gray-900, text-white
+- Gradients: from-blue-500 to-purple-500
+- Rounded: rounded-xl, rounded-2xl
+
+## API Endpoints Pattern
+```python
+@app.post("/api/endpoint")
+async def endpoint_name(request: RequestModel):
+    """Description"""
+    try:
+        db = get_db()
+        return {"success": True, "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+## Database Methods Pattern
+```python
+def get_data(self, param: str) -> List[Dict]:
+    """Get data from database"""
+    with sqlite3.connect(self.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute("SELECT * FROM table WHERE col = ?", (param,))
+        return [dict(row) for row in cursor.fetchall()]
+```
+
+## Current Features
+- AI model ranking (7 categories)
+- Smart routing with cache (920x speedup)
+- Rate limiting per model
+- Streaming responses (SSE)
+- Session memory
+- JWT authentication
+- Analytics dashboard
+
+## Commands
+# Backend
+python api/server.py
+
+# Frontend
+npm run dev
+
+# Tests
+python scripts/smoke_test.py
+
+## Important Files
+- agents/database.py - Database operations
+- agents/ai_router.py - Model routing
+- agents/auth.py - JWT authentication
+- api/server.py - API endpoints (19 total)
+- app/chat/page.tsx - Chat UI
+- app/models-ranking/page.tsx - Rankings UI
+
+## When making changes:
+1. Read file first (view tool)
+2. Use str_replace for edits
+3. Test the change
+4. Show expected output
