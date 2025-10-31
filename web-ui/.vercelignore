@@ -1,0 +1,29 @@
+# Vercel ignore file to reduce serverless function size
+
+# Development files
+*.md
+*.txt
+.eslintrc*
+.prettierrc*
+.editorconfig
+
+# Test files
+**/*.test.*
+**/*.spec.*
+**/__tests__/**
+**/tests/**
+**/test/**
+
+# Documentation
+**/docs/**
+**/examples/**
+**/demo/**
+
+# Build artifacts (not needed in functions)
+.next/cache
+
+# TypeScript source maps (optional)
+*.map
+
+# Development dependencies are already excluded by npm
+
