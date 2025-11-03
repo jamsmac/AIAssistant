@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Send, Zap, Loader2, Paperclip, X, FileText, Image as ImageIcon, File, ChevronLeft, ChevronRight, Plus, Trash2, Search } from 'lucide-react';
+import { ArrowLeft, Send, Zap, Loader2, Paperclip, X, FileText, Image as ImageIcon, File, ChevronLeft, ChevronRight, Plus, Trash2, Search, Mic } from 'lucide-react';
 
 interface FileAttachment {
   name: string;
@@ -30,6 +30,36 @@ interface ChatSession {
   first_message?: string;
 }
 
+// Type for SpeechRecognition API
+interface SpeechRecognitionEvent {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: {
+      isFinal: boolean;
+      [index: number]: {
+        transcript: string;
+      };
+    };
+  };
+}
+
+interface SpeechRecognitionErrorEvent {
+  error: string;
+}
+
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -44,6 +74,12 @@ export default function ChatPage() {
   const [fileProcessing, setFileProcessing] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Voice input state
+  const [isListening, setIsListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -72,7 +108,31 @@ export default function ChatPage() {
     };
     handleResize();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    // Check voice recognition support
+    const SpeechRecognition = (window as unknown as { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance }).SpeechRecognition ||
+                              (window as unknown as { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance }).webkitSpeechRecognition;
+    setVoiceSupported(!!SpeechRecognition);
+
+    // Keyboard shortcut for voice input (Ctrl+Shift+V)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+        e.preventDefault();
+        if (voiceSupported) {
+          if (isListening) {
+            stopListening();
+          } else {
+            startListening();
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const createNewSession = async () => {
@@ -240,6 +300,86 @@ export default function ChatPage() {
     if (fileType.startsWith('image/')) return <ImageIcon className="w-5 h-5" />;
     if (fileType === 'application/pdf') return <FileText className="w-5 h-5" />;
     return <File className="w-5 h-5" />;
+  };
+
+  // Voice recognition functions
+  const startListening = () => {
+    if (!voiceSupported) {
+      setVoiceError('Voice recognition is not supported in your browser');
+      return;
+    }
+
+    setVoiceError(null);
+    const SpeechRecognition = (window as unknown as { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance }).SpeechRecognition ||
+                              (window as unknown as { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance }).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || 'en-US';
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let finalTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + ' ';
+        }
+      }
+
+      // Update input with final transcript
+      if (finalTranscript) {
+        setInput(prev => prev + finalTranscript);
+      }
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.error('Speech recognition error:', event.error);
+      let errorMessage = 'Voice recognition error';
+
+      switch (event.error) {
+        case 'no-speech':
+          errorMessage = 'No speech detected. Please try again.';
+          break;
+        case 'audio-capture':
+          errorMessage = 'Microphone not found or not accessible';
+          break;
+        case 'not-allowed':
+          errorMessage = 'Microphone access denied. Please grant permission.';
+          break;
+        case 'network':
+          errorMessage = 'Network error during voice recognition';
+          break;
+        default:
+          errorMessage = `Voice recognition error: ${event.error}`;
+      }
+
+      setVoiceError(errorMessage);
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
   };
 
   const sendMessage = async () => {
@@ -751,6 +891,14 @@ export default function ChatPage() {
 
         {/* Input */}
         <div className="bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 p-4">
+          {/* Voice Error Display */}
+          {voiceError && (
+            <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-center gap-2">
+              <X className="w-4 h-4" />
+              {voiceError}
+            </div>
+          )}
+
           {/* File Error Display */}
           {fileError && (
             <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-center gap-2">
@@ -828,17 +976,35 @@ export default function ChatPage() {
                 </span>
               </div>
             </div>
-            <button
-              onClick={sendMessage}
-              disabled={loading || !input.trim()}
-              className="px-6 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-white font-medium transition flex items-center gap-2 self-start"
-            >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Send className="w-5 h-5" />
+            <div className="flex gap-2 self-start">
+              {/* Voice Input Button */}
+              {voiceSupported && (
+                <button
+                  onClick={isListening ? stopListening : startListening}
+                  disabled={loading}
+                  className={`px-4 py-3 rounded-lg text-white font-medium transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isListening
+                      ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                      : 'bg-white/10 hover:bg-white/20 border border-white/20'
+                  }`}
+                  title={isListening ? 'Stop listening (Ctrl+Shift+V)' : 'Start voice input (Ctrl+Shift+V)'}
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
               )}
-            </button>
+              {/* Send Button */}
+              <button
+                onClick={sendMessage}
+                disabled={loading || !input.trim()}
+                className="px-6 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-white font-medium transition flex items-center gap-2"
+              >
+                {loading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
         </div>
