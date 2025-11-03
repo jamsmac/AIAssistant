@@ -108,10 +108,118 @@ class HistoryDatabase:
             
             # Индексы для рейтингов
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_rankings_category 
+                CREATE INDEX IF NOT EXISTS idx_rankings_category
                 ON ai_model_rankings(category, rank)
             """)
-            
+
+            # Таблица проектов
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS projects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_projects_user_id
+                ON projects(user_id)
+            """)
+
+            # Таблица баз данных (пользовательских)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS databases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    schema_json TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects(id)
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_databases_project_id
+                ON databases(project_id)
+            """)
+
+            # Таблица записей базы данных
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS database_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    database_id INTEGER NOT NULL,
+                    data_json TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (database_id) REFERENCES databases(id)
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_database_records_database_id
+                ON database_records(database_id)
+            """)
+
+            # Таблица рабочих процессов (workflows)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS workflows (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    trigger_type TEXT NOT NULL,
+                    trigger_config TEXT,
+                    actions_json TEXT NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_workflows_user_id
+                ON workflows(user_id)
+            """)
+
+            # Таблица выполнений workflows
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_executions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workflow_id INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    error TEXT,
+                    executed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (workflow_id) REFERENCES workflows(id)
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_workflow_executions_workflow_id
+                ON workflow_executions(workflow_id)
+            """)
+
+            # Таблица токенов интеграций
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS integration_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    integration_type TEXT NOT NULL,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    expires_at TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_integration_tokens_user_integration
+                ON integration_tokens(user_id, integration_type)
+            """)
+
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
     
@@ -558,6 +666,561 @@ class HistoryDatabase:
                 ORDER BY name
             """)
             return [dict(row) for row in cursor.fetchall()]
+
+    # ============================================
+    # Projects
+    # ============================================
+
+    def create_project(self, user_id: int, name: str, description: Optional[str] = None) -> int:
+        """
+        Создать новый проект
+
+        Args:
+            user_id: ID пользователя
+            name: Название проекта
+            description: Описание проекта
+
+        Returns:
+            ID созданного проекта
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO projects (user_id, name, description)
+                VALUES (?, ?, ?)
+            """, (user_id, name, description))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_projects(self, user_id: int) -> List[Dict]:
+        """
+        Получить список всех проектов пользователя
+
+        Args:
+            user_id: ID пользователя
+
+        Returns:
+            Список проектов
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM projects
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            """, (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_project(self, project_id: int, user_id: int) -> Optional[Dict]:
+        """
+        Получить конкретный проект
+
+        Args:
+            project_id: ID проекта
+            user_id: ID пользователя (для проверки прав доступа)
+
+        Returns:
+            Dict с данными проекта или None
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM projects
+                WHERE id = ? AND user_id = ?
+                LIMIT 1
+            """, (project_id, user_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_project(self, project_id: int, user_id: int, name: str, description: Optional[str] = None) -> bool:
+        """
+        Обновить проект
+
+        Args:
+            project_id: ID проекта
+            user_id: ID пользователя (для проверки прав доступа)
+            name: Новое название
+            description: Новое описание
+
+        Returns:
+            True если обновлено, False если не найдено
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                UPDATE projects
+                SET name = ?, description = ?
+                WHERE id = ? AND user_id = ?
+            """, (name, description, project_id, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_project(self, project_id: int, user_id: int) -> bool:
+        """
+        Удалить проект
+
+        Args:
+            project_id: ID проекта
+            user_id: ID пользователя (для проверки прав доступа)
+
+        Returns:
+            True если удалено, False если не найдено
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                DELETE FROM projects
+                WHERE id = ? AND user_id = ?
+            """, (project_id, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ============================================
+    # Databases
+    # ============================================
+
+    def create_database(self, project_id: int, name: str, schema_json: str) -> int:
+        """
+        Создать новую базу данных в проекте
+
+        Args:
+            project_id: ID проекта
+            name: Название базы данных
+            schema_json: JSON-строка со схемой (определения колонок)
+
+        Returns:
+            ID созданной базы данных
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO databases (project_id, name, schema_json)
+                VALUES (?, ?, ?)
+            """, (project_id, name, schema_json))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_databases(self, project_id: int) -> List[Dict]:
+        """
+        Получить все базы данных проекта
+
+        Args:
+            project_id: ID проекта
+
+        Returns:
+            Список баз данных
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM databases
+                WHERE project_id = ?
+                ORDER BY created_at DESC
+            """, (project_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_database(self, database_id: int) -> Optional[Dict]:
+        """
+        Получить конкретную базу данных
+
+        Args:
+            database_id: ID базы данных
+
+        Returns:
+            Dict с данными базы данных или None
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM databases
+                WHERE id = ?
+                LIMIT 1
+            """, (database_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_database(self, database_id: int) -> bool:
+        """
+        Удалить базу данных
+
+        Args:
+            database_id: ID базы данных
+
+        Returns:
+            True если удалено, False если не найдено
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                DELETE FROM databases
+                WHERE id = ?
+            """, (database_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ============================================
+    # Database Records
+    # ============================================
+
+    def create_record(self, database_id: int, data_json: str) -> int:
+        """
+        Создать запись в базе данных
+
+        Args:
+            database_id: ID базы данных
+            data_json: JSON-строка с данными записи
+
+        Returns:
+            ID созданной записи
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO database_records (database_id, data_json)
+                VALUES (?, ?)
+            """, (database_id, data_json))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_records(self, database_id: int, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """
+        Получить записи из базы данных
+
+        Args:
+            database_id: ID базы данных
+            limit: Количество записей
+            offset: Смещение для пагинации
+
+        Returns:
+            Список записей
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM database_records
+                WHERE database_id = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (database_id, limit, offset))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_record(self, record_id: int) -> Optional[Dict]:
+        """
+        Получить конкретную запись
+
+        Args:
+            record_id: ID записи
+
+        Returns:
+            Dict с данными записи или None
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM database_records
+                WHERE id = ?
+                LIMIT 1
+            """, (record_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_record(self, record_id: int, data_json: str) -> bool:
+        """
+        Обновить запись
+
+        Args:
+            record_id: ID записи
+            data_json: Новые данные в формате JSON
+
+        Returns:
+            True если обновлено, False если не найдено
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                UPDATE database_records
+                SET data_json = ?, updated_at = ?
+                WHERE id = ?
+            """, (data_json, datetime.now().isoformat(), record_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_record(self, record_id: int) -> bool:
+        """
+        Удалить запись
+
+        Args:
+            record_id: ID записи
+
+        Returns:
+            True если удалено, False если не найдено
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                DELETE FROM database_records
+                WHERE id = ?
+            """, (record_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ============================================
+    # Workflows
+    # ============================================
+
+    def create_workflow(
+        self,
+        user_id: int,
+        name: str,
+        trigger_type: str,
+        trigger_config: str,
+        actions_json: str
+    ) -> int:
+        """
+        Создать новый workflow
+
+        Args:
+            user_id: ID пользователя
+            name: Название workflow
+            trigger_type: Тип триггера (manual, schedule, webhook, etc.)
+            trigger_config: Конфигурация триггера в формате JSON
+            actions_json: Массив действий в формате JSON
+
+        Returns:
+            ID созданного workflow
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO workflows (user_id, name, trigger_type, trigger_config, actions_json)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, name, trigger_type, trigger_config, actions_json))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_workflows(self, user_id: int) -> List[Dict]:
+        """
+        Получить все workflows пользователя
+
+        Args:
+            user_id: ID пользователя
+
+        Returns:
+            Список workflows
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM workflows
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            """, (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_workflow(self, workflow_id: int, user_id: int) -> Optional[Dict]:
+        """
+        Получить конкретный workflow
+
+        Args:
+            workflow_id: ID workflow
+            user_id: ID пользователя (для проверки прав доступа)
+
+        Returns:
+            Dict с данными workflow или None
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM workflows
+                WHERE id = ? AND user_id = ?
+                LIMIT 1
+            """, (workflow_id, user_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_workflow(self, workflow_id: int, user_id: int, **kwargs) -> bool:
+        """
+        Обновить workflow
+
+        Args:
+            workflow_id: ID workflow
+            user_id: ID пользователя (для проверки прав доступа)
+            **kwargs: Поля для обновления (name, trigger_type, trigger_config, actions_json, enabled)
+
+        Returns:
+            True если обновлено, False если не найдено
+        """
+        allowed_fields = ['name', 'trigger_type', 'trigger_config', 'actions_json', 'enabled']
+        updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
+
+        if not updates:
+            return False
+
+        set_clause = ', '.join([f"{k} = ?" for k in updates.keys()])
+        values = list(updates.values()) + [workflow_id, user_id]
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(f"""
+                UPDATE workflows
+                SET {set_clause}
+                WHERE id = ? AND user_id = ?
+            """, values)
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_workflow(self, workflow_id: int, user_id: int) -> bool:
+        """
+        Удалить workflow
+
+        Args:
+            workflow_id: ID workflow
+            user_id: ID пользователя (для проверки прав доступа)
+
+        Returns:
+            True если удалено, False если не найдено
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                DELETE FROM workflows
+                WHERE id = ? AND user_id = ?
+            """, (workflow_id, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ============================================
+    # Workflow Executions
+    # ============================================
+
+    def create_execution(
+        self,
+        workflow_id: int,
+        status: str,
+        result_json: str,
+        error: Optional[str] = None
+    ) -> int:
+        """
+        Создать запись о выполнении workflow
+
+        Args:
+            workflow_id: ID workflow
+            status: Статус выполнения (success, failed, running)
+            result_json: Результаты выполнения в формате JSON
+            error: Текст ошибки (если есть)
+
+        Returns:
+            ID созданной записи
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO workflow_executions (workflow_id, status, result_json, error)
+                VALUES (?, ?, ?, ?)
+            """, (workflow_id, status, result_json, error))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_executions(self, workflow_id: int, limit: int = 50) -> List[Dict]:
+        """
+        Получить историю выполнений workflow
+
+        Args:
+            workflow_id: ID workflow
+            limit: Количество записей
+
+        Returns:
+            Список выполнений
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM workflow_executions
+                WHERE workflow_id = ?
+                ORDER BY executed_at DESC
+                LIMIT ?
+            """, (workflow_id, limit))
+            return [dict(row) for row in cursor.fetchall()]
+
+    # ============================================
+    # Integration Tokens
+    # ============================================
+
+    def save_integration_token(
+        self,
+        user_id: int,
+        integration_type: str,
+        access_token: str,
+        refresh_token: Optional[str] = None,
+        expires_at: Optional[str] = None
+    ) -> int:
+        """
+        Сохранить или обновить токен интеграции
+
+        Args:
+            user_id: ID пользователя
+            integration_type: Тип интеграции (gmail, google_drive, telegram)
+            access_token: Access token
+            refresh_token: Refresh token (опционально)
+            expires_at: Время истечения токена
+
+        Returns:
+            ID записи
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            # Сначала проверяем, существует ли уже токен
+            cursor = conn.execute("""
+                SELECT id FROM integration_tokens
+                WHERE user_id = ? AND integration_type = ?
+            """, (user_id, integration_type))
+            existing = cursor.fetchone()
+
+            if existing:
+                # Обновляем существующий
+                cursor = conn.execute("""
+                    UPDATE integration_tokens
+                    SET access_token = ?, refresh_token = ?, expires_at = ?
+                    WHERE user_id = ? AND integration_type = ?
+                """, (access_token, refresh_token, expires_at, user_id, integration_type))
+                conn.commit()
+                return existing[0]
+            else:
+                # Создаём новый
+                cursor = conn.execute("""
+                    INSERT INTO integration_tokens
+                    (user_id, integration_type, access_token, refresh_token, expires_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, integration_type, access_token, refresh_token, expires_at))
+                conn.commit()
+                return cursor.lastrowid
+
+    def get_integration_token(self, user_id: int, integration_type: str) -> Optional[Dict]:
+        """
+        Получить токен интеграции
+
+        Args:
+            user_id: ID пользователя
+            integration_type: Тип интеграции
+
+        Returns:
+            Dict с данными токена или None
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM integration_tokens
+                WHERE user_id = ? AND integration_type = ?
+                LIMIT 1
+            """, (user_id, integration_type))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_integration_token(self, user_id: int, integration_type: str) -> bool:
+        """
+        Удалить токен интеграции
+
+        Args:
+            user_id: ID пользователя
+            integration_type: Тип интеграции
+
+        Returns:
+            True если удалено, False если не найдено
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                DELETE FROM integration_tokens
+                WHERE user_id = ? AND integration_type = ?
+            """, (user_id, integration_type))
+            conn.commit()
+            return cursor.rowcount > 0
 
 
 # Singleton instance

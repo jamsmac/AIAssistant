@@ -877,14 +877,18 @@ async def delete_session(session_id: str):
 # ============================================
 
 if __name__ == "__main__":
+    # Получаем порт из переменной окружения (для Railway/Vercel) или используем 8000 по умолчанию
+    port = int(os.getenv("PORT", 8000))
+    
     print("🚀 Starting AI Development System API Server...")
-    print("📚 API Documentation: http://localhost:8000/docs")
-    print("🔍 Health Check: http://localhost:8000/api/health")
+    print(f"📚 API Documentation: http://localhost:{port}/docs")
+    print(f"🔍 Health Check: http://localhost:{port}/api/health")
+    print(f"🌐 Server running on: http://0.0.0.0:{port}")
     print("")
     
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=port,
         log_level="info"
     )
