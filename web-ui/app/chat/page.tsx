@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Send, Zap, Loader2, Paperclip, X, FileText, Image as ImageIcon, File, ChevronLeft, ChevronRight, Plus, Trash2, Search, Mic } from 'lucide-react';
+import { API_URL } from '@/lib/config';
 
 interface FileAttachment {
   name: string;
@@ -137,7 +138,7 @@ export default function ChatPage() {
 
   const createNewSession = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/sessions/create', {
+      const response = await fetch(`${API_URL}/api/sessions/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -154,7 +155,7 @@ export default function ChatPage() {
   const fetchSessions = async () => {
     setSessionsLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/sessions');
+      const response = await fetch(`${API_URL}/api/sessions`);
       const data = await response.json();
       setSessions(data.sessions || []);
     } catch (error) {
@@ -166,7 +167,7 @@ export default function ChatPage() {
 
   const loadSession = async (session_id: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/sessions/${session_id}/messages`);
+      const response = await fetch(`${API_URL}/api/sessions/${session_id}/messages`);
       const data = await response.json();
       setMessages(data.messages || []);
       setSessionId(session_id);
@@ -182,7 +183,7 @@ export default function ChatPage() {
 
   const deleteSession = async (session_id: string) => {
     try {
-      await fetch(`http://localhost:8000/api/sessions/${session_id}`, {
+      await fetch(`${API_URL}/api/sessions/${session_id}`, {
         method: 'DELETE'
       });
       // If deleting current session, create new one
@@ -403,7 +404,7 @@ export default function ChatPage() {
         const assistantMessageIndex = messages.length + 1;
         setMessages(prev => [...prev, { role: 'assistant', content: '', model: '' }]);
 
-        const response = await fetch('http://localhost:8000/api/chat/stream', {
+        const response = await fetch(`${API_URL}/api/chat/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -477,7 +478,7 @@ export default function ChatPage() {
     } else {
       // Обычный режим (без streaming)
       try {
-        const response = await fetch('http://localhost:8000/api/chat', {
+        const response = await fetch(`${API_URL}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

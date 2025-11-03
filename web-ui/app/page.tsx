@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { 
-  Activity, 
-  Zap, 
-  DollarSign, 
+import { API_URL } from '@/lib/config';
+import {
+  Activity,
+  Zap,
+  DollarSign,
   CheckCircle,
   Code,
   MessageSquare,
@@ -30,7 +31,7 @@ export default function Dashboard() {
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/stats');
+      const response = await fetch(`${API_URL}/api/stats`);
       const data = await response.json();
       setStats(data);
       setLoading(false);

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Rocket, Loader2, CheckCircle, Download } from 'lucide-react';
+import { API_URL } from '@/lib/config';
 
 type ModelResult = { model: string; response: string; cost: number; tokens: number };
 interface ProjectResult {
@@ -49,7 +50,7 @@ export default function CreateProjectPage() {
       // Этап 1: Архитектура
       setCurrentStep('Создание архитектуры...');
       
-      const response = await fetch('http://localhost:8000/api/project', {
+      const response = await fetch(`${API_URL}/api/project`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idea, budget })

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, CheckCircle, XCircle, DollarSign, Zap, Activity } from 'lucide-react';
+import { API_URL } from '@/lib/config';
 
 interface ModelsInfo {
   [key: string]: {
@@ -27,8 +28,8 @@ export default function AgentsPage() {
   const fetchData = async () => {
     try {
       const [modelsRes, healthRes] = await Promise.all([
-        fetch('http://localhost:8000/api/models'),
-        fetch('http://localhost:8000/api/health')
+        fetch(`${API_URL}/api/models`),
+        fetch(`${API_URL}/api/health`)
       ]);
       
       const modelsData = await modelsRes.json();

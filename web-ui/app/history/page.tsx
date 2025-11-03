@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { 
-  ArrowLeft, 
-  Search, 
-  Filter, 
+import { API_URL } from '@/lib/config';
+import {
+  ArrowLeft,
+  Search,
+  Filter,
   Download, 
   
   DollarSign,
@@ -83,7 +84,7 @@ export default function HistoryPage() {
         ...(searchQuery && { search: searchQuery })
       });
 
-      const response = await fetch(`http://localhost:8000/api/history?${params}`);
+      const response = await fetch(`${API_URL}/api/history?${params}`);
       const data = await response.json();
       setHistory(data.items || []);
     } catch (error) {
@@ -95,7 +96,7 @@ export default function HistoryPage() {
 
   const loadStats = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/stats');
+      const response = await fetch(`${API_URL}/api/stats`);
       const data = await response.json();
       setStats(data);
     } catch (error) {
@@ -111,7 +112,7 @@ export default function HistoryPage() {
   const exportData = async (format: 'json' | 'csv') => {
     try {
       const params = new URLSearchParams({ format });
-      const response = await fetch(`http://localhost:8000/api/history/export?${params}`);
+      const response = await fetch(`${API_URL}/api/history/export?${params}`);
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');

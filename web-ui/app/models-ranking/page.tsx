@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, RefreshCw, TrendingUp, CheckCircle, ExternalLink } from 'lucide-react';
+import { API_URL } from '@/lib/config';
 
 interface RankingModel {
   id: number;
@@ -88,7 +89,7 @@ export default function ModelsRankingPage() {
   const loadRankings = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/rankings');
+      const response = await fetch(`${API_URL}/api/rankings`);
       const data = await response.json();
       setRankings(data);
       
@@ -121,7 +122,7 @@ export default function ModelsRankingPage() {
   const updateRankings = async () => {
     setUpdating(true);
     try {
-      const response = await fetch('http://localhost:8000/api/rankings/update', {
+      const response = await fetch(`${API_URL}/api/rankings/update`, {
         method: 'POST'
       });
       const data = await response.json();
