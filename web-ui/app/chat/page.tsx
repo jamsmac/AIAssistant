@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Send, Zap, Loader2, Paperclip, X, FileText, Image as ImageIcon, File } from 'lucide-react';
+import { ArrowLeft, Send, Zap, Loader2, Paperclip, X, FileText, Image as ImageIcon, File, ChevronLeft, ChevronRight, Plus, Trash2, Search } from 'lucide-react';
 
 interface FileAttachment {
   name: string;
@@ -21,6 +21,15 @@ interface Message {
   file?: FileAttachment;
 }
 
+interface ChatSession {
+  id: string;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  first_message?: string;
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -36,6 +45,14 @@ export default function ChatPage() {
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Sidebar state
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     // Создаем или восстанавливаем сессию
     const savedSessionId = typeof window !== 'undefined' ? localStorage.getItem('currentSessionId') : null;
@@ -44,6 +61,18 @@ export default function ChatPage() {
     } else {
       createNewSession();
     }
+    // Load sessions list
+    fetchSessions();
+
+    // Auto-close sidebar on mobile
+    const handleResize = () => {
+      if (window.innerWidth < 768) {
+        setSidebarOpen(false);
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   const createNewSession = async () => {
@@ -56,9 +85,81 @@ export default function ChatPage() {
       setSessionId(data.session_id);
       if (typeof window !== 'undefined') localStorage.setItem('currentSessionId', data.session_id);
       setMessages([]);
+      fetchSessions(); // Refresh session list
     } catch (error) {
       console.error('Error creating session:', error);
     }
+  };
+
+  const fetchSessions = async () => {
+    setSessionsLoading(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/sessions');
+      const data = await response.json();
+      setSessions(data.sessions || []);
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const loadSession = async (session_id: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/sessions/${session_id}/messages`);
+      const data = await response.json();
+      setMessages(data.messages || []);
+      setSessionId(session_id);
+      if (typeof window !== 'undefined') localStorage.setItem('currentSessionId', session_id);
+      // Close sidebar on mobile after loading
+      if (window.innerWidth < 768) {
+        setSidebarOpen(false);
+      }
+    } catch (error) {
+      console.error('Error loading session:', error);
+    }
+  };
+
+  const deleteSession = async (session_id: string) => {
+    try {
+      await fetch(`http://localhost:8000/api/sessions/${session_id}`, {
+        method: 'DELETE'
+      });
+      // If deleting current session, create new one
+      if (session_id === sessionId) {
+        await createNewSession();
+      }
+      fetchSessions(); // Refresh list
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('Error deleting session:', error);
+    }
+  };
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    // Debounce search
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      fetchSessions();
+    }, 300);
+  };
+
+  const getRelativeTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -282,26 +383,154 @@ export default function ChatPage() {
     }
   };
 
+  const filteredSessions = sessions.filter(session =>
+    searchQuery === '' || session.first_message?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900">
-      {/* Header */}
-      <header className="bg-black/30 backdrop-blur-md border-b border-white/10">
-        <div className="max-w-5xl mx-auto px-6 py-4">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <button className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition">
-                <ArrowLeft className="w-5 h-5" />
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex">
+      {/* Sidebar */}
+      <div
+        className={`fixed md:relative top-0 left-0 h-screen bg-gray-800 border-r border-gray-700 transition-all duration-300 z-50 ${
+          sidebarOpen ? 'w-80' : 'w-0'
+        } overflow-hidden`}
+      >
+        <div className="h-full flex flex-col">
+          {/* Sidebar Header */}
+          <div className="p-4 border-b border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">Chat History</h2>
+              <button
+                onClick={createNewSession}
+                className="p-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-white transition"
+                title="New Chat"
+              >
+                <Plus className="w-4 h-4" />
               </button>
-            </Link>
-            <div>
-              <h1 className="text-2xl font-bold text-white">AI Chat</h1>
-              <p className="text-sm text-gray-400">Общайся с AI моделями</p>
+            </div>
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search chats..."
+                value={searchQuery}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
             </div>
           </div>
-        </div>
-      </header>
 
-      <div className="max-w-5xl mx-auto px-6 py-6 pb-20 md:pb-6">
+          {/* Sessions List */}
+          <div className="flex-1 overflow-y-auto">
+            {sessionsLoading ? (
+              <div className="p-4 space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="animate-pulse">
+                    <div className="h-16 bg-gray-700 rounded-lg"></div>
+                  </div>
+                ))}
+              </div>
+            ) : filteredSessions.length === 0 ? (
+              <div className="p-8 text-center">
+                <div className="text-gray-400 text-sm">
+                  {searchQuery ? 'No matching chats' : 'No chat history'}
+                </div>
+              </div>
+            ) : (
+              <div className="p-2">
+                {filteredSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className={`group relative mb-2 p-3 rounded-lg cursor-pointer transition ${
+                      session.id === sessionId
+                        ? 'bg-blue-500/20 border border-blue-500/30'
+                        : 'bg-gray-700/50 hover:bg-gray-700 border border-transparent'
+                    }`}
+                    onClick={() => loadSession(session.id)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-white font-medium truncate">
+                          {session.first_message || 'New Chat'}
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1">
+                          {getRelativeTime(session.updated_at)} • {session.message_count} msgs
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteConfirm(session.id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-red-400 transition"
+                        title="Delete chat"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Delete Confirmation */}
+                    {deleteConfirm === session.id && (
+                      <div className="absolute inset-0 bg-gray-800 rounded-lg p-3 flex flex-col justify-center gap-2 z-10">
+                        <div className="text-sm text-white">Delete this chat?</div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteSession(session.id);
+                            }}
+                            className="flex-1 px-3 py-1 bg-red-500 hover:bg-red-600 rounded text-white text-xs transition"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteConfirm(null);
+                            }}
+                            className="flex-1 px-3 py-1 bg-gray-600 hover:bg-gray-700 rounded text-white text-xs transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header */}
+        <header className="bg-black/30 backdrop-blur-md border-b border-white/10">
+          <div className="max-w-5xl mx-auto px-6 py-4">
+            <div className="flex items-center gap-4">
+              {/* Sidebar Toggle */}
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition"
+              >
+                {sidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+              </button>
+              <Link href="/">
+                <button className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition">
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+              </Link>
+              <div>
+                <h1 className="text-2xl font-bold text-white">AI Chat</h1>
+                <p className="text-sm text-gray-400">Общайся с AI моделями</p>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="max-w-5xl mx-auto px-6 py-6 pb-20 md:pb-6 w-full">
         {/* Settings Panel */}
         <div className="bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
@@ -611,6 +840,7 @@ export default function ChatPage() {
               )}
             </button>
           </div>
+        </div>
         </div>
       </div>
     </div>
