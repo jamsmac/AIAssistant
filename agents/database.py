@@ -1222,6 +1222,37 @@ class HistoryDatabase:
             conn.commit()
             return cursor.rowcount > 0
 
+    # ============================================
+    # AI Model Rankings
+    # ============================================
+
+    def get_all_rankings(self) -> List[Dict]:
+        """
+        Получить агрегированные рейтинги всех AI моделей
+
+        Returns:
+            Список моделей с усредненными оценками по категориям
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT
+                    model_name as model,
+                    AVG(score) as avg_overall,
+                    AVG(CASE WHEN category = 'reasoning' THEN score END) as avg_reasoning,
+                    AVG(CASE WHEN category = 'coding' THEN score END) as avg_coding,
+                    AVG(CASE WHEN category = 'vision' THEN score END) as avg_vision,
+                    AVG(CASE WHEN category = 'chat' THEN score END) as avg_chat,
+                    AVG(CASE WHEN category = 'agents' THEN score END) as avg_agents,
+                    AVG(CASE WHEN category = 'translation' THEN score END) as avg_translation,
+                    AVG(CASE WHEN category = 'local' THEN score END) as avg_local,
+                    COUNT(*) as total_rankings
+                FROM ai_model_rankings
+                GROUP BY model_name
+                ORDER BY avg_overall DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
 
 # Singleton instance
 _db_instance = None

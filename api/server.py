@@ -510,16 +510,21 @@ async def export_history(
 @app.get("/api/rankings")
 async def get_rankings():
     """
-    Получить все рейтинги AI моделей по категориям
-    
+    Получить агрегированные рейтинги всех AI моделей
+
     Returns:
-        Dict с рейтингами по каждой категории (ТОП-3)
+        Dict с успехом, списком моделей с усредненными оценками и их количеством
     """
     try:
         db = get_db()
         rankings = db.get_all_rankings()
-        return rankings
+        return {
+            "success": True,
+            "rankings": rankings,
+            "count": len(rankings)
+        }
     except Exception as e:
+        logger.error(f"Rankings error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
