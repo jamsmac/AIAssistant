@@ -93,7 +93,7 @@ export default function ModelsRankingPage() {
       setRankings(data);
       
       // Получаем дату последнего обновления
-      const dates = Object.values(data).flat().map((m: RankingModel) => m.update_date);
+      const dates = (Object.values(data).flat() as RankingModel[]).map((m) => m.update_date);
       if (dates.length > 0) {
         const latest = dates.sort().reverse()[0];
         setLastUpdate(latest);
