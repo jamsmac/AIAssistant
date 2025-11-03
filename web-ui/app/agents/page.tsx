@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { ArrowLeft, CheckCircle, XCircle, DollarSign, Zap, Activity } from 'lucide-react';
 import { API_URL } from '@/lib/config';
 
+export const dynamic = 'force-dynamic';
+
 interface ModelsInfo {
   [key: string]: {
     name: string;

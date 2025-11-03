@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { ArrowLeft, RefreshCw, TrendingUp, CheckCircle, ExternalLink } from 'lucide-react';
 import { API_URL } from '@/lib/config';
 
+export const dynamic = 'force-dynamic';
+
 interface RankingModel {
   id: number;
   model_name: string;

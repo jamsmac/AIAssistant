@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { API_URL } from '@/lib/config';
+
+export const dynamic = 'force-dynamic';
+
 import {
   ArrowLeft,
   Search,
