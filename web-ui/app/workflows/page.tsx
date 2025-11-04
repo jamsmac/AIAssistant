@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useApi } from '@/lib/useApi';
 import { useToast } from '@/components/ui/Toast';
+import { API_URL } from '@/lib/config';
 
 // Types
 interface WorkflowTrigger {

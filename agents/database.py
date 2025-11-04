@@ -549,7 +549,7 @@ class HistoryDatabase:
             conn.commit()
             return cursor.lastrowid
 
-    def get_all_rankings(self) -> Dict[str, List[Dict]]:
+    def get_rankings_grouped_by_category(self) -> Dict[str, List[Dict]]:
         """
         Получить все рейтинги, сгруппированные по категориям
         

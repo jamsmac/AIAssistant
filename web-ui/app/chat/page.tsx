@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, Send, Zap, Loader2, Paperclip, X, FileText, Image as ImageIcon, File, ChevronLeft, ChevronRight, Plus, Trash2, Search, Mic } from 'lucide-react';
 import { useApi } from '@/lib/useApi';
 import { useToast } from '@/components/ui/Toast';
+import { API_URL } from '@/lib/config';
 
 interface FileAttachment {
   name: string;

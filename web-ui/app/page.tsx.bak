@@ -55,7 +55,6 @@ interface ActivityItem {
 }
 
 interface ChartDataPoint {
-  [key: string]: any;
   date?: string;
   requests?: number;
   model?: string;

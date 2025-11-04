@@ -2,10 +2,24 @@ venv/
 __pycache__/
 *.pyc
 .env
+.env.local
 .DS_Store
 data/history.db
 node_modules/
 .next/
 .cursor/
-
 .vercel
+
+# Secret files - DO NOT COMMIT!
+ALL_18_VARIABLES.txt
+ADD_MISSING_7.txt
+COPY_TO_RAILWAY.txt
+add_railway_variables.sh
+RAILWAY_VARIABLES.md
+
+# Build artifacts
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*

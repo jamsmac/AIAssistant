@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Mail, HardDrive, MessageCircle, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, Settings, X } from 'lucide-react';
 import { useApi } from '@/lib/useApi';
 import { useToast } from '@/components/ui/Toast';
+import { API_URL } from '@/lib/config';
 
 interface Integration {
   type: 'gmail' | 'google_drive' | 'telegram';
