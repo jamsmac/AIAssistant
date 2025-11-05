@@ -10,12 +10,10 @@
     }
   },
   "env": {
-    "NEXT_PUBLIC_API_URL": "@api_url",
     "NEXT_PUBLIC_ENVIRONMENT": "production"
   },
   "build": {
     "env": {
-      "NEXT_PUBLIC_API_URL": "@api_url",
       "NEXT_PUBLIC_ENVIRONMENT": "production"
     }
   },
