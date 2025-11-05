@@ -3,14 +3,9 @@
  */
 
 import { API_URL } from './config';
+import type { ApiError, RequestData } from '../types/api';
 
 // Types
-export interface ApiError {
-  message: string;
-  code?: string;
-  details?: any;
-}
-
 export interface ApiResponse<T> {
   data?: T;
   error?: ApiError;
@@ -36,6 +31,7 @@ const ERROR_MESSAGES: Record<number, string> = {
 export class APIClient {
   private baseUrl: string;
   private showToast?: (message: string, type: 'success' | 'error' | 'warning' | 'info') => void;
+  private csrfToken: string | null = null;
 
   constructor(baseUrl: string = API_URL) {
     this.baseUrl = baseUrl;
@@ -49,25 +45,63 @@ export class APIClient {
   }
 
   /**
-   * Get authentication token from localStorage
+   * Get authentication token from localStorage (for backward compatibility)
+   * New auth uses httpOnly cookies instead
    */
   private getToken(): string | null {
     if (typeof window === 'undefined') return null;
+    // Still check localStorage for backward compatibility
     return localStorage.getItem('token');
+  }
+
+  /**
+   * Get CSRF token for mutations
+   */
+  private async getCsrfToken(): Promise<string | null> {
+    // Return cached token if valid
+    if (this.csrfToken) return this.csrfToken;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/api/auth/csrf-token`, {
+        credentials: 'include', // Include cookies
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        this.csrfToken = data.csrf_token;
+        return this.csrfToken;
+      }
+    } catch (error) {
+      console.error('Failed to get CSRF token:', error);
+    }
+
+    return null;
   }
 
   /**
    * Build headers for request
    */
-  private buildHeaders(includeAuth: boolean = true): HeadersInit {
+  private async buildHeaders(includeAuth: boolean = true, includeCsrf: boolean = false): Promise<HeadersInit> {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
     };
 
+    // Add auth token if available (for backward compatibility)
     if (includeAuth) {
       const token = this.getToken();
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+
+    // Add CSRF token for mutations
+    if (includeCsrf) {
+      const csrfToken = await this.getCsrfToken();
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
       }
     }
 
@@ -77,8 +111,8 @@ export class APIClient {
   /**
    * Handle API errors
    */
-  private handleError(status: number, errorData?: any): never {
-    const message = errorData?.detail || errorData?.message || ERROR_MESSAGES[status] || 'An error occurred';
+  private handleError(status: number, errorData?: Record<string, unknown>): never {
+    const message = (errorData?.detail || errorData?.message || ERROR_MESSAGES[status] || 'An error occurred') as string;
 
     // Show toast notification if handler is available
     if (this.showToast) {
@@ -94,9 +128,9 @@ export class APIClient {
     }
 
     // Throw error for component to catch
-    const error: any = new Error(message);
+    const error = new Error(message) as ApiError;
     error.status = status;
-    error.data = errorData;
+    error.details = errorData;
     throw error;
   }
 
@@ -106,14 +140,22 @@ export class APIClient {
   private async request<T>(
     method: string,
     url: string,
-    data?: any,
+    data?: RequestData,
     options: RequestInit = {}
   ): Promise<T> {
     try {
+      // Determine if we need CSRF token (for mutations)
+      const needsCsrf = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase()) &&
+                       !url.includes('/auth/login') &&
+                       !url.includes('/auth/register');
+
+      const headers = await this.buildHeaders(options.headers !== null, needsCsrf);
+
       const response = await fetch(`${this.baseUrl}${url}`, {
         method,
-        headers: this.buildHeaders(options.headers !== null),
+        headers,
         body: data ? JSON.stringify(data) : undefined,
+        credentials: 'include', // Always include cookies
         ...options,
       });
 
@@ -133,9 +175,10 @@ export class APIClient {
       }
 
       return responseData as T;
-    } catch (error: any) {
+    } catch (error) {
       // Network errors
-      if (error.name === 'TypeError' || error.message === 'Failed to fetch') {
+      const err = error as Error;
+      if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
         const message = 'Network error. Please check your connection.';
         if (this.showToast) {
           this.showToast(message, 'error');
@@ -158,21 +201,21 @@ export class APIClient {
   /**
    * POST request
    */
-  async post<T>(url: string, data?: any, options?: RequestInit): Promise<T> {
+  async post<T>(url: string, data?: RequestData, options?: RequestInit): Promise<T> {
     return this.request<T>('POST', url, data, options);
   }
 
   /**
    * PUT request
    */
-  async put<T>(url: string, data?: any, options?: RequestInit): Promise<T> {
+  async put<T>(url: string, data?: RequestData, options?: RequestInit): Promise<T> {
     return this.request<T>('PUT', url, data, options);
   }
 
   /**
    * PATCH request
    */
-  async patch<T>(url: string, data?: any, options?: RequestInit): Promise<T> {
+  async patch<T>(url: string, data?: RequestData, options?: RequestInit): Promise<T> {
     return this.request<T>('PATCH', url, data, options);
   }
 
@@ -181,6 +224,74 @@ export class APIClient {
    */
   async delete<T>(url: string, options?: RequestInit): Promise<T> {
     return this.request<T>('DELETE', url, undefined, options);
+  }
+
+  /**
+   * Login method - stores token in cookie
+   */
+  async login(email: string, password: string) {
+    const response = await this.post<any>('/api/auth/login', { email, password });
+
+    // Clear old localStorage token if exists
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+    }
+
+    // Reset CSRF token on login
+    this.csrfToken = null;
+
+    return response;
+  }
+
+  /**
+   * Logout method - clears cookie and local state
+   */
+  async logout() {
+    try {
+      await this.post('/api/auth/logout', {});
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      // Clear local state
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('token');
+      }
+      this.csrfToken = null;
+
+      // Redirect to login
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    }
+  }
+
+  /**
+   * Register method - stores token in cookie
+   */
+  async register(email: string, password: string) {
+    const response = await this.post<any>('/api/auth/register', { email, password });
+
+    // Clear old localStorage token if exists
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+    }
+
+    // Reset CSRF token on register
+    this.csrfToken = null;
+
+    return response;
+  }
+
+  /**
+   * Check authentication status
+   */
+  async checkAuth() {
+    try {
+      const response = await this.get<any>('/api/auth/me');
+      return { isAuthenticated: true, user: response };
+    } catch (error) {
+      return { isAuthenticated: false, user: null };
+    }
   }
 }
 

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ai-assistant-platform": {
+      "command": "/Users/js/autopilot-core/venv/bin/python",
+      "args": [
+        "/Users/js/autopilot-core/agents/mcp_server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/js/autopilot-core",
+        "DATABASE_PATH": "/Users/js/autopilot-core/data/history.db"
+      }
+    }
+  }
+}

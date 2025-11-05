@@ -1,11 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Send, Zap, Loader2, Paperclip, X, FileText, Image as ImageIcon, File, ChevronLeft, ChevronRight, Plus, Trash2, Search, Mic } from 'lucide-react';
-import { useApi } from '@/lib/useApi';
-import { useToast } from '@/components/ui/Toast';
+import { ArrowLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { API_URL } from '@/lib/config';
+
+// Lazy load components for better performance
+const ChatSidebar = lazy(() => import('@/components/chat/ChatSidebar'));
+const ChatSettings = lazy(() => import('@/components/chat/ChatSettings'));
+const ChatMessages = lazy(() => import('@/components/chat/ChatMessages'));
+const ChatInput = lazy(() => import('@/components/chat/ChatInput'));
 
 interface FileAttachment {
   name: string;
@@ -63,6 +67,13 @@ interface SpeechRecognitionInstance {
   onend: (() => void) | null;
 }
 
+// Loading component for Suspense fallback
+const LoadingSpinner = () => (
+  <div className="flex items-center justify-center p-4">
+    <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+  </div>
+);
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -70,13 +81,12 @@ export default function ChatPage() {
   const [taskType, setTaskType] = useState<string>('code');
   const [budget, setBudget] = useState<string>('cheap');
   const [complexity, setComplexity] = useState<number>(5);
-  const [streamEnabled, setStreamEnabled] = useState(true); // По умолчанию включен
+  const [streamEnabled, setStreamEnabled] = useState(true);
   const [sessionId, setSessionId] = useState<string>('');
   const [contextEnabled, setContextEnabled] = useState(true);
   const [selectedFile, setSelectedFile] = useState<FileAttachment | null>(null);
   const [fileProcessing, setFileProcessing] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Voice input state
   const [isListening, setIsListening] = useState(false);
@@ -92,8 +102,12 @@ export default function ChatPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Streaming state
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingMessageIndex, setStreamingMessageIndex] = useState<number | undefined>();
+
   useEffect(() => {
-    // Создаем или восстанавливаем сессию
+    // Create or restore session
     const savedSessionId = typeof window !== 'undefined' ? localStorage.getItem('currentSessionId') : null;
     if (savedSessionId) {
       setSessionId(savedSessionId);
@@ -210,21 +224,6 @@ export default function ChatPage() {
     }, 300);
   };
 
-  const getRelativeTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-  };
-
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -294,15 +293,6 @@ export default function ChatPage() {
   const removeFile = () => {
     setSelectedFile(null);
     setFileError(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const getFileIcon = (fileType: string) => {
-    if (fileType.startsWith('image/')) return <ImageIcon className="w-5 h-5" />;
-    if (fileType === 'application/pdf') return <FileText className="w-5 h-5" />;
-    return <File className="w-5 h-5" />;
   };
 
   // Voice recognition functions
@@ -386,7 +376,8 @@ export default function ChatPage() {
   };
 
   const sendMessage = async () => {
-    if (!input.trim() || loading) return;
+    if (!input.trim() && !selectedFile) return;
+    if (loading) return;
 
     const userMessage: Message = {
       role: 'user',
@@ -402,15 +393,17 @@ export default function ChatPage() {
 
     if (streamEnabled) {
       try {
-        // Создаем пустое сообщение ассистента
+        // Create empty assistant message
         const assistantMessageIndex = messages.length + 1;
         setMessages(prev => [...prev, { role: 'assistant', content: '', model: '' }]);
+        setIsStreaming(true);
+        setStreamingMessageIndex(assistantMessageIndex);
 
         const response = await fetch(`${API_URL}/api/chat/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            prompt: userMessage.content,
+            prompt: currentInput,
             task_type: taskType,
             complexity: complexity,
             budget: budget,
@@ -446,7 +439,7 @@ export default function ChatPage() {
                     currentModel = data.model;
                   } else if (data.type === 'content') {
                     accumulatedText += data.chunk;
-                    // Обновляем сообщение в реальном времени
+                    // Update message in real-time
                     setMessages(prev => {
                       const newMessages = [...prev];
                       newMessages[assistantMessageIndex] = {
@@ -457,8 +450,18 @@ export default function ChatPage() {
                       return newMessages;
                     });
                   } else if (data.type === 'done') {
-                    // можно обработать завершение
-                    // tokens: data.tokens
+                    // Handle completion
+                    if (data.tokens) {
+                      setMessages(prev => {
+                        const newMessages = [...prev];
+                        newMessages[assistantMessageIndex] = {
+                          ...newMessages[assistantMessageIndex],
+                          tokens: data.tokens,
+                          cost: data.cost
+                        };
+                        return newMessages;
+                      });
+                    }
                   }
                 } catch (e) {
                   console.error('Parse error:', e);
@@ -476,9 +479,11 @@ export default function ChatPage() {
         }]);
       } finally {
         setLoading(false);
+        setIsStreaming(false);
+        setStreamingMessageIndex(undefined);
       }
     } else {
-      // Обычный режим (без streaming)
+      // Non-streaming mode
       try {
         const response = await fetch(`${API_URL}/api/chat`, {
           method: 'POST',
@@ -499,15 +504,20 @@ export default function ChatPage() {
 
         const data = await response.json();
 
+        if (data.error) {
+          throw new Error(data.error);
+        }
+
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: data.response,
+          content: data.response || 'No response received',
           model: data.model,
           cost: data.cost,
-          tokens: data.tokens
+          tokens: data.tokens,
+          cached: data.cached
         }]);
       } catch (error) {
-        console.error('Error:', error);
+        console.error('Chat error:', error);
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: `Error: ${error instanceof Error ? error.message : String(error)}`,
@@ -519,133 +529,25 @@ export default function ChatPage() {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
-  const filteredSessions = sessions.filter(session =>
-    searchQuery === '' || session.first_message?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-black to-gray-900 flex">
       {/* Sidebar */}
-      <div
-        className={`fixed md:relative top-0 left-0 h-screen bg-gray-800 border-r border-gray-700 transition-all duration-300 z-50 ${
-          sidebarOpen ? 'w-80' : 'w-0'
-        } overflow-hidden`}
-      >
-        <div className="h-full flex flex-col">
-          {/* Sidebar Header */}
-          <div className="p-4 border-b border-gray-700">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">Chat History</h2>
-              <button
-                onClick={createNewSession}
-                className="p-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-white transition"
-                title="New Chat"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search chats..."
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
-          </div>
-
-          {/* Sessions List */}
-          <div className="flex-1 overflow-y-auto">
-            {sessionsLoading ? (
-              <div className="p-4 space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="animate-pulse">
-                    <div className="h-16 bg-gray-700 rounded-lg"></div>
-                  </div>
-                ))}
-              </div>
-            ) : filteredSessions.length === 0 ? (
-              <div className="p-8 text-center">
-                <div className="text-gray-400 text-sm">
-                  {searchQuery ? 'No matching chats' : 'No chat history'}
-                </div>
-              </div>
-            ) : (
-              <div className="p-2">
-                {filteredSessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className={`group relative mb-2 p-3 rounded-lg cursor-pointer transition ${
-                      session.id === sessionId
-                        ? 'bg-blue-500/20 border border-blue-500/30'
-                        : 'bg-gray-700/50 hover:bg-gray-700 border border-transparent'
-                    }`}
-                    onClick={() => loadSession(session.id)}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-white font-medium truncate">
-                          {session.first_message || 'New Chat'}
-                        </div>
-                        <div className="text-xs text-gray-400 mt-1">
-                          {getRelativeTime(session.updated_at)} • {session.message_count} msgs
-                        </div>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteConfirm(session.id);
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-red-400 transition"
-                        title="Delete chat"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    {/* Delete Confirmation */}
-                    {deleteConfirm === session.id && (
-                      <div className="absolute inset-0 bg-gray-800 rounded-lg p-3 flex flex-col justify-center gap-2 z-10">
-                        <div className="text-sm text-white">Delete this chat?</div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteSession(session.id);
-                            }}
-                            className="flex-1 px-3 py-1 bg-red-500 hover:bg-red-600 rounded text-white text-xs transition"
-                          >
-                            Delete
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteConfirm(null);
-                            }}
-                            className="flex-1 px-3 py-1 bg-gray-600 hover:bg-gray-700 rounded text-white text-xs transition"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <Suspense fallback={<LoadingSpinner />}>
+        <ChatSidebar
+          sessions={sessions}
+          currentSessionId={sessionId}
+          sidebarOpen={sidebarOpen}
+          searchQuery={searchQuery}
+          deleteConfirm={deleteConfirm}
+          sessionsLoading={sessionsLoading}
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          onNewSession={createNewSession}
+          onLoadSession={loadSession}
+          onDeleteSession={deleteSession}
+          onSearchChange={handleSearch}
+          onSetDeleteConfirm={setDeleteConfirm}
+        />
+      </Suspense>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -658,7 +560,7 @@ export default function ChatPage() {
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition"
               >
-                {sidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                <ChevronRight className={`w-5 h-5 transform ${sidebarOpen ? 'rotate-180' : ''} transition-transform`} />
               </button>
               <Link href="/">
                 <button className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition">
@@ -674,342 +576,53 @@ export default function ChatPage() {
         </header>
 
         <div className="max-w-5xl mx-auto px-6 py-6 pb-20 md:pb-6 w-full">
-        {/* Settings Panel */}
-        <div className="bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Task Type
-              </label>
-              <select
-                value={taskType}
-                onChange={(e) => setTaskType(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="code">Code Generation</option>
-                <option value="architecture">Architecture</option>
-                <option value="review">Code Review</option>
-                <option value="test">Testing</option>
-                <option value="devops">DevOps</option>
-                <option value="research">Research</option>
-              </select>
-            </div>
+          {/* Settings Panel */}
+          <Suspense fallback={<LoadingSpinner />}>
+            <ChatSettings
+              taskType={taskType}
+              budget={budget}
+              complexity={complexity}
+              streamEnabled={streamEnabled}
+              contextEnabled={contextEnabled}
+              sessionId={sessionId}
+              messageCount={messages.length}
+              onTaskTypeChange={setTaskType}
+              onBudgetChange={setBudget}
+              onComplexityChange={setComplexity}
+              onStreamToggle={() => setStreamEnabled(!streamEnabled)}
+              onContextToggle={() => setContextEnabled(!contextEnabled)}
+              onNewChat={createNewSession}
+            />
+          </Suspense>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Budget
-              </label>
-              <select
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="free">Free (Gemini/Ollama)</option>
-                <option value="cheap">Cheap (DeepSeek)</option>
-                <option value="medium">Medium (GPT-4)</option>
-                <option value="premium">Premium (Claude)</option>
-              </select>
-            </div>
+          {/* Chat Messages */}
+          <Suspense fallback={<LoadingSpinner />}>
+            <ChatMessages
+              messages={messages}
+              isStreaming={isStreaming}
+              streamingMessageIndex={streamingMessageIndex}
+            />
+          </Suspense>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Complexity: {complexity}
-              </label>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={complexity}
-                onChange={(e) => setComplexity(Number(e.target.value))}
-                className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-
-            {/* Streaming Toggle */}
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Streaming</label>
-              <button
-                onClick={() => setStreamEnabled(!streamEnabled)}
-                className={`w-full px-4 py-2 rounded-lg font-medium transition ${
-                  streamEnabled ? 'bg-green-500 text-white' : 'bg-gray-700 text-gray-300'
-                }`}
-              >
-                {streamEnabled ? '✓ Enabled' : '✗ Disabled'}
-              </button>
-            </div>
-
-            {/* Context Toggle */}
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Context Memory</label>
-              <button
-                onClick={() => setContextEnabled(!contextEnabled)}
-                className={`w-full px-4 py-2 rounded-lg font-medium transition ${
-                  contextEnabled ? 'bg-purple-500 text-white' : 'bg-gray-700 text-gray-300'
-                }`}
-              >
-                {contextEnabled ? '✓ Enabled' : '✗ Disabled'}
-              </button>
-            </div>
-
-            {/* New Chat Button */}
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">&nbsp;</label>
-              <button
-                onClick={createNewSession}
-                className="w-full px-4 py-2 bg-gradient-to-r from-pink-500 to-red-500 hover:from-pink-600 hover:to-red-600 rounded-lg text-white font-medium transition"
-              >
-                🔄 New Chat
-              </button>
-            </div>
-          </div>
-          {/* Context Info */}
-          {contextEnabled && sessionId && (
-            <div className="mt-4 col-span-2 bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-white mb-1">Context Memory Active</div>
-                  <div className="text-xs text-gray-400">
-                    Session: {sessionId.slice(0, 8)}... • {messages.length} messages
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-purple-400">{messages.length * 50}</div>
-                  <div className="text-xs text-gray-400">~tokens</div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Chat Messages */}
-        <div className="bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 p-6 mb-6 h-[500px] overflow-y-auto">
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4">
-                <Zap className="w-8 h-8 text-white" />
-              </div>
-              <h2 className="text-xl font-semibold text-white mb-2">
-                Start chatting with AI
-              </h2>
-              <p className="text-gray-400 max-w-md">
-                Задай любой вопрос или попроси сгенерировать код. Система автоматически выберет лучшую модель.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-2xl p-4 ${
-                      message.role === 'user'
-                        ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white'
-                        : 'bg-white/10 text-gray-100'
-                    }`}
-                  >
-                    {/* File preview if attached */}
-                    {message.file && (
-                      <div className="mb-3 p-3 bg-black/20 rounded-lg border border-white/10">
-                        <div className="flex items-center gap-3">
-                          <div className="text-blue-400">
-                            {getFileIcon(message.file.type)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium text-white truncate">
-                              {message.file.name}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              {(message.file.size / 1024).toFixed(1)} KB
-                            </div>
-                          </div>
-                        </div>
-                        {/* Show image preview */}
-                        {message.file.type.startsWith('image/') && message.file.content && (
-                          <img
-                            src={message.file.content}
-                            alt={message.file.name}
-                            className="mt-2 max-w-full h-auto rounded-lg"
-                            style={{ maxHeight: '200px' }}
-                          />
-                        )}
-                      </div>
-                    )}
-                    <div className="whitespace-pre-wrap">{message.content}</div>
-                    {message.model && (
-                      <div className="mt-3 pt-3 border-t border-white/20">
-                        <div className="flex items-center gap-3 text-xs">
-                          <div className="flex items-center gap-1 text-gray-400">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            {message.model}
-                          </div>
-                          {message.tokens !== undefined && (
-                            <div className="flex items-center gap-1 text-gray-400">
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
-                              </svg>
-                              {message.tokens} tokens
-                            </div>
-                          )}
-                          {message.cached && (
-                            <div className="flex items-center gap-1 text-green-400">
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                              </svg>
-                              Cached
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {/* Advanced Typing indicator */}
-              {loading && streamEnabled && (
-                <div className="flex gap-3 justify-start">
-                  <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <svg className="w-4 h-4 text-white animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                  </div>
-                  <div className="bg-white/10 rounded-2xl px-4 py-3 min-w-[200px]">
-                    <div className="flex items-center gap-3">
-                      <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                      </div>
-                      <span className="text-xs text-gray-400">AI is thinking...</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Input */}
-        <div className="bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 p-4">
-          {/* Voice Error Display */}
-          {voiceError && (
-            <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-center gap-2">
-              <X className="w-4 h-4" />
-              {voiceError}
-            </div>
-          )}
-
-          {/* File Error Display */}
-          {fileError && (
-            <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-center gap-2">
-              <X className="w-4 h-4" />
-              {fileError}
-            </div>
-          )}
-
-          {/* Selected File Display */}
-          {selectedFile && (
-            <div className="mb-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-              <div className="flex items-center gap-3">
-                <div className="text-blue-400">
-                  {getFileIcon(selectedFile.type)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-white truncate">
-                    {selectedFile.name}
-                  </div>
-                  <div className="text-xs text-gray-400">
-                    {(selectedFile.size / 1024).toFixed(1)} KB
-                  </div>
-                </div>
-                <button
-                  onClick={removeFile}
-                  className="p-1 hover:bg-red-500/20 rounded-lg transition text-red-400"
-                  title="Remove file"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* File Processing Indicator */}
-          {fileProcessing && (
-            <div className="mb-3 p-3 bg-white/5 border border-white/10 rounded-lg text-gray-400 text-sm flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Processing file...
-            </div>
-          )}
-
-          <div className="flex gap-4">
-            <div className="flex-1 space-y-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Напиши свой вопрос... (Enter для отправки)"
-                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                rows={3}
-                disabled={loading}
-              />
-              {/* File Input Button */}
-              <div className="flex items-center gap-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,.txt"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                  disabled={loading || fileProcessing}
-                />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={loading || fileProcessing}
-                  className="px-3 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-gray-300 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Attach file"
-                >
-                  <Paperclip className="w-4 h-4" />
-                  <span className="text-sm">Attach file</span>
-                </button>
-                <span className="text-xs text-gray-500">
-                  PDF, JPG, PNG, TXT (max 10MB)
-                </span>
-              </div>
-            </div>
-            <div className="flex gap-2 self-start">
-              {/* Voice Input Button */}
-              {voiceSupported && (
-                <button
-                  onClick={isListening ? stopListening : startListening}
-                  disabled={loading}
-                  className={`px-4 py-3 rounded-lg text-white font-medium transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                    isListening
-                      ? 'bg-red-500 hover:bg-red-600 animate-pulse'
-                      : 'bg-white/10 hover:bg-white/20 border border-white/20'
-                  }`}
-                  title={isListening ? 'Stop listening (Ctrl+Shift+V)' : 'Start voice input (Ctrl+Shift+V)'}
-                >
-                  <Mic className="w-5 h-5" />
-                </button>
-              )}
-              {/* Send Button */}
-              <button
-                onClick={sendMessage}
-                disabled={loading || !input.trim()}
-                className="px-6 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-white font-medium transition flex items-center gap-2"
-              >
-                {loading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Send className="w-5 h-5" />
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+          {/* Input Area */}
+          <Suspense fallback={<LoadingSpinner />}>
+            <ChatInput
+              input={input}
+              loading={loading}
+              selectedFile={selectedFile}
+              fileProcessing={fileProcessing}
+              fileError={fileError}
+              isListening={isListening}
+              voiceSupported={voiceSupported}
+              voiceError={voiceError}
+              onInputChange={setInput}
+              onSendMessage={sendMessage}
+              onFileSelect={handleFileSelect}
+              onRemoveFile={removeFile}
+              onStartListening={startListening}
+              onStopListening={stopListening}
+            />
+          </Suspense>
         </div>
       </div>
     </div>

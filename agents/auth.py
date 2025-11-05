@@ -22,11 +22,29 @@ ALGORITHM = "HS256"
 def _get_secret_key() -> str:
     """
     Fetch SECRET_KEY from environment.
-    Raises a ValueError if not configured.
+    Validates that key is strong enough (minimum 32 characters).
+    Raises a ValueError if not configured or too weak.
     """
     secret = os.getenv("SECRET_KEY")
     if not secret:
         raise ValueError("SECRET_KEY environment variable is not set")
+    
+    # Валидация: SECRET_KEY должен быть минимум 32 символа для production
+    if len(secret) < 32:
+        import warnings
+        warnings.warn(
+            f"SECRET_KEY is too short ({len(secret)} chars). "
+            "For production, use at least 64 characters. "
+            "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(64))'"
+        )
+        # В development разрешаем короткие ключи, но предупреждаем
+        if os.getenv("ENVIRONMENT", "development").lower() == "production":
+            raise ValueError(
+                f"SECRET_KEY is too short for production ({len(secret)} chars). "
+                "Minimum 64 characters required. "
+                "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(64))'"
+            )
+    
     return secret
 
 
@@ -129,5 +147,42 @@ def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
         return None
     except jwt.InvalidTokenError:
         return None
+
+
+def get_current_user(authorization: str = None, cookies: Dict[str, str] = None):
+    """
+    Extract and verify user from JWT token (from header or cookie).
+
+    Args:
+        authorization: Authorization header value (Bearer token)
+        cookies: Request cookies dict
+
+    Returns:
+        User info dict with 'id' and 'email' or raises exception
+    """
+    token = None
+
+    # Try to get token from Authorization header first
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+
+    # Fallback to cookie if no header token
+    if not token and cookies:
+        token = cookies.get("auth_token")
+
+    if not token:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    # Verify token
+    payload = verify_jwt_token(token)
+    if not payload:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return {
+        "id": payload["sub"],
+        "email": payload["email"]
+    }
 
 

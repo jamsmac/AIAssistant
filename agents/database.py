@@ -1253,6 +1253,150 @@ class HistoryDatabase:
             """)
             return [dict(row) for row in cursor.fetchall()]
 
+    # ============================================
+    # Cache Methods (для AI Router)
+    # ============================================
+
+    def get_cached_response(self, prompt: str, task_type: str) -> Optional[Dict]:
+        """
+        Получить закешированный ответ для промпта
+
+        Args:
+            prompt: Текст запроса
+            task_type: Тип задачи
+
+        Returns:
+            Dict с кешированным ответом или None
+        """
+        import hashlib
+        from datetime import datetime, timedelta
+
+        # Создаем хеш промпта для быстрого поиска
+        prompt_hash = hashlib.md5(f"{prompt}:{task_type}".encode()).hexdigest()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # Проверяем наличие таблицы кеша
+            cursor = conn.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='request_cache'
+            """)
+            if not cursor.fetchone():
+                # Создаем таблицу кеша если её нет
+                conn.execute("""
+                    CREATE TABLE request_cache (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        prompt_hash TEXT NOT NULL UNIQUE,
+                        prompt TEXT NOT NULL,
+                        response TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        task_type TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TEXT NOT NULL,
+                        use_count INTEGER DEFAULT 1
+                    )
+                """)
+                conn.execute("""
+                    CREATE INDEX idx_cache_hash ON request_cache(prompt_hash)
+                """)
+                conn.execute("""
+                    CREATE INDEX idx_cache_expires ON request_cache(expires_at)
+                """)
+                return None
+
+            # Ищем валидный кешированный ответ
+            cursor = conn.execute("""
+                SELECT * FROM request_cache
+                WHERE prompt_hash = ?
+                AND expires_at > datetime('now')
+                LIMIT 1
+            """, (prompt_hash,))
+
+            row = cursor.fetchone()
+            if row:
+                # Увеличиваем счетчик использования
+                conn.execute("""
+                    UPDATE request_cache
+                    SET use_count = use_count + 1
+                    WHERE id = ?
+                """, (row['id'],))
+
+                return dict(row)
+
+            return None
+
+    def cache_response(self, prompt: str, response: str, model: str,
+                      task_type: str, ttl_hours: int = 24) -> bool:
+        """
+        Сохранить ответ в кеше
+
+        Args:
+            prompt: Текст запроса
+            response: Ответ от модели
+            model: Используемая модель
+            task_type: Тип задачи
+            ttl_hours: Время жизни кеша в часах
+
+        Returns:
+            True если успешно сохранено
+        """
+        import hashlib
+        from datetime import datetime, timedelta
+
+        # Создаем хеш промпта
+        prompt_hash = hashlib.md5(f"{prompt}:{task_type}".encode()).hexdigest()
+
+        # Вычисляем время истечения
+        expires_at = (datetime.now() + timedelta(hours=ttl_hours)).isoformat()
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # Проверяем наличие таблицы кеша
+                cursor = conn.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name='request_cache'
+                """)
+                if not cursor.fetchone():
+                    # Создаем таблицу кеша
+                    conn.execute("""
+                        CREATE TABLE request_cache (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            prompt_hash TEXT NOT NULL UNIQUE,
+                            prompt TEXT NOT NULL,
+                            response TEXT NOT NULL,
+                            model TEXT NOT NULL,
+                            task_type TEXT,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                            expires_at TEXT NOT NULL,
+                            use_count INTEGER DEFAULT 1
+                        )
+                    """)
+                    conn.execute("""
+                        CREATE INDEX idx_cache_hash ON request_cache(prompt_hash)
+                    """)
+                    conn.execute("""
+                        CREATE INDEX idx_cache_expires ON request_cache(expires_at)
+                    """)
+
+                # Вставляем или обновляем запись
+                conn.execute("""
+                    INSERT OR REPLACE INTO request_cache
+                    (prompt_hash, prompt, response, model, task_type, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (prompt_hash, prompt, response, model, task_type, expires_at))
+
+                # Очищаем устаревшие записи
+                conn.execute("""
+                    DELETE FROM request_cache
+                    WHERE expires_at < datetime('now')
+                """)
+
+                return True
+        except Exception as e:
+            logger.error(f"Failed to cache response: {e}")
+            return False
+
 
 # Singleton instance
 _db_instance = None

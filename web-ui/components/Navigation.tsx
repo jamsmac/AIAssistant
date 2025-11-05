@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useApi } from '@/lib/useApi';
 import {
   Home,
   MessageSquare,
@@ -18,6 +19,9 @@ import {
   User,
   Key,
   ChevronDown,
+  Cpu,
+  FileText,
+  TrendingUp,
 } from 'lucide-react';
 
 interface NavItem {
@@ -29,31 +33,44 @@ interface NavItem {
 export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
+  const api = useApi();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  // Load user info from localStorage
+  // Load user info
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      // Decode JWT to get user email (basic decoding)
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        setUserEmail(payload.email || 'user@example.com');
-      } catch {
-        setUserEmail('user@example.com');
+    // Check authentication status
+    const checkAuth = async () => {
+      const { isAuthenticated, user } = await api.checkAuth();
+      if (isAuthenticated && user) {
+        setUserEmail(user.email || 'user@example.com');
+      } else {
+        // Try legacy localStorage token
+        const token = localStorage.getItem('token');
+        if (token) {
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            setUserEmail(payload.email || 'user@example.com');
+          } catch {
+            setUserEmail('user@example.com');
+          }
+        }
       }
-    }
+    };
+    checkAuth();
   }, []);
 
   const navItems: NavItem[] = [
     { href: '/', label: 'Dashboard', icon: Home },
     { href: '/chat', label: 'Chat', icon: MessageSquare },
     { href: '/projects', label: 'Projects', icon: Folder },
+    { href: '/agents', label: 'Agents', icon: Cpu },
     { href: '/workflows', label: 'Workflows', icon: Zap },
     { href: '/integrations', label: 'Integrations', icon: Plug },
-    { href: '/analytics', label: 'Analytics', icon: BarChart },
+    { href: '/blog', label: 'Blog', icon: FileText },
+    { href: '/admin/blog', label: 'Blog Admin', icon: FileText },
+    { href: '/admin/analytics', label: 'Analytics', icon: TrendingUp },
   ];
 
   const isActive = (href: string) => {
@@ -61,10 +78,15 @@ export default function Navigation() {
     return pathname.startsWith(href);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    router.push('/login');
+  const handleLogout = async () => {
+    try {
+      // Use the new logout method that clears cookies
+      await api.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Fallback to manual redirect
+      router.push('/login');
+    }
   };
 
   // Close mobile menu when route changes
@@ -305,5 +327,10 @@ export default function Navigation() {
     </>
   );
 }
+
+
+
+
+
 
 

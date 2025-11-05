@@ -9,7 +9,9 @@ import sqlite3
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, EmailStr
 from typing import Literal, Optional, List, Dict, Any, Union
 from datetime import datetime, timedelta
@@ -17,6 +19,24 @@ import uvicorn
 from fastapi.responses import StreamingResponse
 import asyncio
 import json
+import time
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+
+# Initialize Sentry for error tracking
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            StarletteIntegration(transaction_style="endpoint"),
+            FastApiIntegration(transaction_style="endpoint"),
+        ],
+        traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
+        environment=os.getenv("ENVIRONMENT", "development"),
+        release=os.getenv("RELEASE_VERSION", "1.0.0")
+    )
 
 # Добавляем путь к корню проекта
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -28,6 +48,10 @@ from database import get_db
 from ranking_collector import RankingCollector
 from auth import hash_password, verify_password, create_jwt_token, verify_jwt_token as verify_jwt
 from rate_limiter import get_rate_limiter
+from csrf_protection import get_csrf_protection
+from oauth_providers import oauth_manager
+from two_factor_auth import TwoFactorAuth
+from monitoring import metrics_collector, alert_manager, request_monitor, system_monitor, AlertSeverity
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -40,21 +64,191 @@ app = FastAPI(
 )
 
 # CORS для веб-интерфейса
+# В production домены читаются из переменной окружения CORS_ORIGINS
+# Формат: CORS_ORIGINS=https://app.example.com,https://www.example.com
+DEFAULT_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:5173",  # Vite dev server
+]
+
+# Получаем production домены из env переменной
+CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "")
+if CORS_ORIGINS_ENV:
+    # Разделяем по запятой и очищаем пробелы
+    production_origins = [origin.strip() for origin in CORS_ORIGINS_ENV.split(",") if origin.strip()]
+    ALLOWED_ORIGINS = DEFAULT_ORIGINS + production_origins
+else:
+    ALLOWED_ORIGINS = DEFAULT_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001", 
-        "http://localhost:3002",
-        "http://localhost:5173"  # Vite dev server
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+# Gzip compression middleware для улучшения производительности
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # Сжимаем ответы > 1KB
+
+# CSP Headers Middleware для защиты от XSS
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Content Security Policy
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https: blob:; "
+            "connect-src 'self' http://localhost:* ws://localhost:* https://api.openai.com https://api.anthropic.com; "
+            "frame-ancestors 'none'; "
+            "form-action 'self';"
+        )
+
+        # Дополнительные security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+        # HSTS для production (раскомментировать при HTTPS)
+        # response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# API Version Middleware - добавляет версию API в заголовки ответов
+class APIVersionMiddleware(BaseHTTPMiddleware):
+    """Middleware для добавления версии API в заголовки ответов"""
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-API-Version"] = app.version
+        response.headers["X-API-Server"] = "AI Assistant Platform"
+        return response
+
+app.add_middleware(APIVersionMiddleware)
+
+# ============================================
+# Monitoring Middleware
+# ============================================
+
+class MonitoringMiddleware(BaseHTTPMiddleware):
+    """Middleware для мониторинга запросов и производительности"""
+
+    async def dispatch(self, request: Request, call_next):
+        # Start timer
+        start_time = time.time()
+
+        # Process request
+        try:
+            response = await call_next(request)
+
+            # Record metrics
+            duration = time.time() - start_time
+            request_monitor.record_request(
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration=duration
+            )
+
+            # Add timing header
+            response.headers["X-Response-Time"] = f"{duration:.3f}"
+
+            # Alert on slow requests
+            if duration > 10:  # More than 10 seconds
+                alert_manager.create_alert(
+                    severity=AlertSeverity.WARNING,
+                    title="Slow Request Detected",
+                    message=f"Request to {request.url.path} took {duration:.2f} seconds",
+                    source="MonitoringMiddleware",
+                    metadata={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "duration": duration
+                    }
+                )
+
+            return response
+
+        except Exception as e:
+            # Record error
+            duration = time.time() - start_time
+            request_monitor.record_request(
+                method=request.method,
+                path=request.url.path,
+                status_code=500,
+                duration=duration
+            )
+
+            # Report to Sentry
+            if SENTRY_DSN:
+                sentry_sdk.capture_exception(e)
+
+            # Create alert for critical errors
+            alert_manager.create_alert(
+                severity=AlertSeverity.ERROR,
+                title="Request Failed",
+                message=str(e),
+                source="MonitoringMiddleware",
+                metadata={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "error": str(e)
+                }
+            )
+
+            raise
+
+app.add_middleware(MonitoringMiddleware)
 
 # Инициализация AI Router
 router = AIRouter()
+
+# ============================================
+# Startup and Shutdown Events
+# ============================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup"""
+    logger.info("Starting AI Development System API")
+
+    # Start system monitoring
+    asyncio.create_task(system_monitor.start(interval=60))
+
+    # Initialize alert channels if configured
+    if os.getenv("SMTP_HOST"):
+        from monitoring import EmailNotificationChannel
+        email_channel = EmailNotificationChannel(
+            smtp_host=os.getenv("SMTP_HOST"),
+            smtp_port=int(os.getenv("SMTP_PORT", 587)),
+            username=os.getenv("SMTP_USERNAME"),
+            password=os.getenv("SMTP_PASSWORD"),
+            to_emails=os.getenv("ALERT_EMAILS", "").split(",")
+        )
+        alert_manager.add_notification_channel(email_channel)
+
+    if os.getenv("WEBHOOK_URL"):
+        from monitoring import WebhookNotificationChannel
+        webhook_channel = WebhookNotificationChannel(os.getenv("WEBHOOK_URL"))
+        alert_manager.add_notification_channel(webhook_channel)
+
+    logger.info("API startup complete")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    logger.info("Shutting down AI Development System API")
+    system_monitor.stop()
 
 # ============================================
 # Pydantic Models (схемы данных)
@@ -487,10 +681,23 @@ async def health_check():
     - Доступность AI моделей
     - Статистику использования
     - Общее состояние системы
+    - Версию API
+    - Статус базы данных
     """
     try:
         available = router._get_available_models()
         stats = router.get_stats()
+        
+        # Проверка доступности базы данных
+        db_status = "healthy"
+        try:
+            db = get_db()
+            # Простая проверка соединения через простой запрос
+            with sqlite3.connect(db.db_path) as conn:
+                conn.execute("SELECT 1").fetchone()
+        except Exception as e:
+            db_status = f"error: {str(e)}"
+            logger.error(f"Database health check failed: {e}")
         
         return HealthResponse(
             status="healthy",
@@ -499,14 +706,17 @@ async def health_check():
                 "openai": available['openai'],
                 "openrouter": available['openrouter'],
                 "gemini": available['gemini'],
-                "ollama": available['ollama']
+                "ollama": available['ollama'],
+                "database": db_status
             },
             router_stats={
                 "total_calls": stats['calls'],
-                "total_cost": stats['cost']
+                "total_cost": stats['cost'],
+                "api_version": app.version
             }
         )
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/models")
@@ -550,6 +760,149 @@ async def list_models():
     }
     
     return models_info
+
+
+# ============================================
+# Monitoring Endpoints
+# ============================================
+
+@app.get("/api/metrics")
+async def get_metrics(
+    name: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None
+):
+    """
+    Получить метрики системы
+
+    Args:
+    - name: Имя метрики для фильтрации
+    - start_time: Начало периода (ISO format)
+    - end_time: Конец периода (ISO format)
+
+    Returns:
+    - metrics: Список метрик
+    - summary: Сводная статистика
+    """
+    start = datetime.fromisoformat(start_time) if start_time else None
+    end = datetime.fromisoformat(end_time) if end_time else None
+
+    metrics = metrics_collector.get_metrics(name, start, end)
+    summary = metrics_collector.get_summary()
+
+    return {
+        "metrics": [m.to_dict() for m in metrics[-1000:]],  # Last 1000 metrics
+        "summary": summary
+    }
+
+
+@app.get("/api/alerts")
+async def get_alerts(
+    active_only: bool = False,
+    limit: int = 100
+):
+    """
+    Получить алерты системы
+
+    Args:
+    - active_only: Показывать только активные алерты
+    - limit: Максимальное количество алертов
+
+    Returns:
+    - alerts: Список алертов
+    - active_count: Количество активных алертов
+    """
+    if active_only:
+        alerts = alert_manager.get_active_alerts()
+    else:
+        alerts = alert_manager.get_alert_history(limit)
+
+    return {
+        "alerts": [a.to_dict() for a in alerts],
+        "active_count": len(alert_manager.get_active_alerts())
+    }
+
+
+@app.post("/api/alerts/{alert_id}/resolve")
+async def resolve_alert(alert_id: str):
+    """
+    Отметить алерт как решенный
+
+    Args:
+    - alert_id: ID алерта
+
+    Returns:
+    - resolved: True если успешно
+    """
+    alert_manager.resolve_alert(alert_id)
+    return {"resolved": True}
+
+
+@app.get("/api/system-status")
+async def get_system_status():
+    """
+    Получить полный статус системы
+
+    Returns:
+    - health: Статус здоровья
+    - metrics: Ключевые метрики
+    - alerts: Активные алерты
+    - performance: Производительность
+    """
+    # Get system metrics
+    summary = metrics_collector.get_summary()
+
+    # Calculate average response time
+    request_durations = summary.get("histograms", {}).get("http_request_duration_seconds", {})
+    avg_response_time = request_durations.get("mean", 0) if request_durations else 0
+
+    # Get error rates
+    total_requests = summary.get("counters", {}).get("http_requests_total", 0)
+    error_5xx = summary.get("counters", {}).get("http_errors_total{type=5xx}", 0)
+    error_4xx = summary.get("counters", {}).get("http_errors_total{type=4xx}", 0)
+
+    error_rate = ((error_5xx + error_4xx) / total_requests * 100) if total_requests > 0 else 0
+
+    # Get system resources
+    cpu_percent = summary.get("gauges", {}).get("system_cpu_percent", 0)
+    memory_percent = summary.get("gauges", {}).get("system_memory_percent", 0)
+    disk_percent = summary.get("gauges", {}).get("system_disk_percent", 0)
+
+    # Determine health status
+    health_status = "healthy"
+    if error_rate > 10 or cpu_percent > 90 or memory_percent > 90:
+        health_status = "degraded"
+    if error_rate > 25 or cpu_percent > 95 or memory_percent > 95:
+        health_status = "critical"
+
+    return {
+        "health": health_status,
+        "timestamp": datetime.utcnow().isoformat(),
+        "metrics": {
+            "requests": {
+                "total": total_requests,
+                "errors_5xx": error_5xx,
+                "errors_4xx": error_4xx,
+                "error_rate": f"{error_rate:.2f}%"
+            },
+            "performance": {
+                "avg_response_time": f"{avg_response_time:.3f}s",
+                "p95_response_time": f"{request_durations.get('p95', 0):.3f}s" if request_durations else "0.000s",
+                "p99_response_time": f"{request_durations.get('p99', 0):.3f}s" if request_durations else "0.000s"
+            },
+            "resources": {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory_percent,
+                "disk_percent": disk_percent,
+                "process_count": summary.get("gauges", {}).get("system_process_count", 0)
+            }
+        },
+        "alerts": {
+            "active": len(alert_manager.get_active_alerts()),
+            "recent": [a.to_dict() for a in alert_manager.get_active_alerts()[:5]]
+        }
+    }
+
 
 @app.get("/api/history", response_model=HistoryResponse)
 async def get_history(
@@ -825,7 +1178,7 @@ async def chat_stream(request: ChatRequest):
 # ============================================
 
 @app.post("/api/auth/register", response_model=AuthResponse)
-async def register(request: RegisterRequest):
+async def register(request: RegisterRequest, client_request: Request):
     """
     Регистрация нового пользователя
 
@@ -837,6 +1190,16 @@ async def register(request: RegisterRequest):
     - token: JWT токен
     - user: Информация о пользователе
     """
+    # Проверяем rate limiting
+    client_ip = client_request.client.host if client_request.client else "unknown"
+    rate_limiter = get_rate_limiter()
+
+    if not rate_limiter.check_rate_limit(f"auth_register:{client_ip}", tier="anonymous"):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many registration attempts. Please try again later."
+        )
+
     try:
         db = get_db()
 
@@ -857,10 +1220,30 @@ async def register(request: RegisterRequest):
         # Генерируем токен
         token = create_jwt_token(user_id, request.email)
 
-        return AuthResponse(
-            token=token,
-            user=UserInfo(**user)
+        # Создаем response с cookie
+        response = JSONResponse(content={
+            "token": token,  # Оставляем для обратной совместимости
+            "user": {
+                "id": user['id'],
+                "email": user['email'],
+                "created_at": user['created_at'].isoformat() if isinstance(user['created_at'], datetime) else user['created_at']
+            },
+            "message": "Registration successful"
+        })
+
+        # Устанавливаем httpOnly cookie
+        secure_cookie = os.getenv("ENVIRONMENT", "development").lower() == "production"
+        response.set_cookie(
+            key="auth_token",
+            value=token,
+            httponly=True,  # Защита от XSS
+            secure=secure_cookie,  # True в production с HTTPS
+            samesite="lax",  # Защита от CSRF
+            max_age=86400,  # 24 часа
+            path="/"
         )
+
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -868,7 +1251,7 @@ async def register(request: RegisterRequest):
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, client_request: Request):
     """
     Вход в систему
 
@@ -880,6 +1263,17 @@ async def login(request: LoginRequest):
     - token: JWT токен
     - user: Информация о пользователе
     """
+    # Проверяем rate limiting (более строгий для login)
+    client_ip = client_request.client.host if client_request.client else "unknown"
+    rate_limiter = get_rate_limiter()
+
+    # Используем комбинацию IP + email для защиты от brute force конкретных аккаунтов
+    if not rate_limiter.check_rate_limit(f"auth_login:{client_ip}:{request.email}", tier="anonymous"):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please try again later."
+        )
+
     try:
         db = get_db()
 
@@ -898,13 +1292,102 @@ async def login(request: LoginRequest):
         # Генерируем токен
         token = create_jwt_token(user['id'], user['email'])
 
-        return AuthResponse(
-            token=token,
-            user=UserInfo(**user)
+        # Создаем response с cookie
+        response = JSONResponse(content={
+            "token": token,  # Оставляем для обратной совместимости
+            "user": {
+                "id": user['id'],
+                "email": user['email'],
+                "created_at": user['created_at'].isoformat() if isinstance(user['created_at'], datetime) else user['created_at']
+            },
+            "message": "Login successful"
+        })
+
+        # Устанавливаем httpOnly cookie
+        secure_cookie = os.getenv("ENVIRONMENT", "development").lower() == "production"
+        response.set_cookie(
+            key="auth_token",
+            value=token,
+            httponly=True,  # Защита от XSS
+            secure=secure_cookie,  # True в production с HTTPS
+            samesite="lax",  # Защита от CSRF
+            max_age=86400,  # 24 часа
+            path="/"
         )
+
+        return response
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/auth/refresh")
+async def refresh_token(authorization: str = Header(None)):
+    """
+    Обновить JWT токен (refresh token endpoint)
+    
+    Использует текущий токен (даже если он почти истек) для получения нового токена.
+    
+    Headers:
+    - Authorization: Bearer {token}
+    
+    Returns:
+    - Новый токен и информация о пользователе
+    """
+    try:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid token")
+
+        token = authorization.replace("Bearer ", "")
+        
+        # Проверяем токен (даже если он почти истек, но еще валиден)
+        payload = verify_jwt(token)
+        
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        # Получаем пользователя из базы для подтверждения что он еще существует
+        db = get_db()
+        user = db.get_user_by_email(payload['email'])
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        
+        if not user.get('is_active', True):
+            raise HTTPException(status_code=403, detail="User account is disabled")
+
+        # Генерируем новый токен
+        new_token = create_jwt_token(user['id'], user['email'])
+
+        # Создаем response с новым токеном
+        secure_cookie = os.getenv("ENVIRONMENT", "development").lower() == "production"
+        response = JSONResponse(content={
+            "token": new_token,
+            "user": {
+                "id": user['id'],
+                "email": user['email'],
+                "created_at": user['created_at'].isoformat() if isinstance(user.get('created_at'), datetime) else user.get('created_at')
+            },
+            "message": "Token refreshed successfully"
+        })
+
+        # Устанавливаем новый токен в cookie
+        response.set_cookie(
+            key="auth_token",
+            value=new_token,
+            httponly=True,
+            secure=secure_cookie,
+            samesite="lax",
+            max_age=86400,  # 24 часа
+            path="/"
+        )
+
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Token refresh failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -942,6 +1425,495 @@ async def get_current_user(authorization: str = Header(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/auth/logout")
+async def logout():
+    """
+    Выход из системы (очистка cookie)
+    """
+    response = JSONResponse(content={"message": "Logged out successfully"})
+    response.delete_cookie(key="auth_token", path="/")
+    return response
+
+
+@app.get("/api/auth/csrf-token")
+async def get_csrf_token(authorization: str = Header(None)):
+    """
+    Получить CSRF токен для защищенных операций
+
+    Returns:
+    - csrf_token: Токен для использования в заголовке X-CSRF-Token
+    """
+    # Проверяем авторизацию
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Генерируем CSRF токен
+    csrf = get_csrf_protection()
+    csrf_token = csrf.generate_token(str(payload.get('sub', '')))
+
+    return {
+        "csrf_token": csrf_token,
+        "header_name": "X-CSRF-Token",
+        "expires_in": 3600
+    }
+
+
+# ============================================
+# OAuth Endpoints
+# ============================================
+
+@app.get("/api/auth/oauth/providers")
+async def get_oauth_providers():
+    """
+    Получить список доступных OAuth провайдеров
+
+    Returns:
+    - providers: Список доступных провайдеров для входа
+    """
+    providers = oauth_manager.list_available_providers()
+    return {
+        "providers": [
+            {
+                "name": provider,
+                "display_name": provider.capitalize(),
+                "icon_url": f"/static/icons/{provider}.svg"
+            }
+            for provider in providers
+        ]
+    }
+
+
+@app.get("/api/auth/oauth/{provider}/login")
+async def oauth_login(provider: str):
+    """
+    Инициировать OAuth вход для указанного провайдера
+
+    Args:
+    - provider: Имя провайдера (google, github, microsoft)
+
+    Returns:
+    - authorization_url: URL для редиректа пользователя
+    """
+    oauth_provider = oauth_manager.get_provider(provider)
+    if not oauth_provider:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider {provider} is not configured"
+        )
+
+    # Генерируем state для защиты от CSRF
+    state = oauth_provider.generate_state()
+
+    # Получаем URL авторизации
+    auth_url = oauth_provider.get_authorization_url(state=state)
+
+    return {
+        "authorization_url": auth_url,
+        "state": state
+    }
+
+
+@app.post("/api/auth/oauth/{provider}/callback")
+async def oauth_callback(
+    provider: str,
+    code: str,
+    state: str,
+    response: Response
+):
+    """
+    Обработать OAuth callback от провайдера
+
+    Args:
+    - provider: Имя провайдера
+    - code: Код авторизации от провайдера
+    - state: State параметр для проверки CSRF
+
+    Returns:
+    - user: Информация о пользователе
+    - access_token: JWT токен для API
+    """
+    try:
+        # Обрабатываем callback
+        result = await oauth_manager.handle_callback(provider, code, state)
+
+        # Извлекаем данные пользователя
+        user_info = result["user_info"]
+        email = user_info.get("email") or user_info.get("mail")
+        name = user_info.get("name") or user_info.get("displayName") or user_info.get("login")
+
+        if not email:
+            raise HTTPException(
+                status_code=400,
+                detail="Email not provided by OAuth provider"
+            )
+
+        db = get_db()
+
+        # Проверяем, существует ли пользователь
+        existing_user = db.get_user_by_email(email)
+
+        if existing_user:
+            # Обновляем информацию о последнем входе
+            user_id = existing_user["id"]
+            db.execute_query(
+                """
+                UPDATE users
+                SET last_login = CURRENT_TIMESTAMP,
+                    oauth_provider = ?,
+                    oauth_id = ?
+                WHERE id = ?
+                """,
+                (provider, user_info.get("id", ""), user_id)
+            )
+        else:
+            # Создаем нового пользователя
+            user_id = db.create_user(
+                email=email,
+                password_hash="",  # OAuth пользователи не имеют пароля
+                username=name or email.split("@")[0],
+                oauth_provider=provider,
+                oauth_id=user_info.get("id", "")
+            )
+
+        # Создаем JWT токен
+        token = create_jwt_token({
+            "user_id": user_id,
+            "email": email,
+            "provider": provider
+        })
+
+        # Устанавливаем cookie
+        response.set_cookie(
+            key="auth_token",
+            value=token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=86400  # 24 часа
+        )
+
+        return {
+            "user": {
+                "id": user_id,
+                "email": email,
+                "name": name,
+                "provider": provider
+            },
+            "access_token": token,
+            "token_type": "bearer"
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"OAuth callback error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process OAuth callback"
+        )
+
+
+# ============================================
+# CSRF Protection Dependency
+# ============================================
+
+async def verify_csrf_token(
+    x_csrf_token: str = Header(None),
+    authorization: str = Header(None)
+):
+    """Dependency для проверки CSRF токена"""
+    # Проверяем наличие CSRF токена
+    if not x_csrf_token:
+        raise HTTPException(
+            status_code=403,
+            detail="CSRF token required. Get one from /api/auth/csrf-token"
+        )
+
+    # Проверяем авторизацию
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid auth token")
+
+    # Проверяем CSRF токен
+    csrf = get_csrf_protection()
+        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+    return payload
+
+
+# ============================================
+# Two-Factor Authentication Endpoints
+# ============================================
+
+# Initialize 2FA manager
+two_factor = TwoFactorAuth(get_db())
+
+@app.post("/api/auth/2fa/setup")
+async def setup_2fa(
+    authorization: str = Header(None),
+    x_csrf_token: str = Header(None)
+):
+    """
+    Начать настройку 2FA для пользователя
+
+    Returns:
+    - qr_code: Base64 QR код для сканирования
+    - secret: Секретный ключ для ручного ввода
+    - backup_codes: Резервные коды
+    """
+    # Verify authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Verify CSRF token
+    csrf = get_csrf_protection()
+        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+    user_id = payload.get('sub')
+    email = payload.get('email', '')
+
+    # Generate 2FA setup
+    setup_data = two_factor.generate_secret(user_id, email)
+
+    return {
+        "qr_code": f"data:image/png;base64,{setup_data['qr_code']}",
+        "secret": setup_data['manual_entry_key'],
+        "backup_codes": setup_data['backup_codes']
+    }
+
+
+@app.post("/api/auth/2fa/enable")
+async def enable_2fa(
+    token: str,
+    authorization: str = Header(None),
+    x_csrf_token: str = Header(None)
+):
+    """
+    Включить 2FA после проверки токена
+
+    Args:
+    - token: 6-значный TOTP токен
+
+    Returns:
+    - enabled: True если 2FA успешно включена
+    """
+    # Verify authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    jwt_token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(jwt_token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Verify CSRF token
+    csrf = get_csrf_protection()
+        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+    user_id = payload.get('sub')
+
+    # Enable 2FA
+    if two_factor.enable_2fa(user_id, token):
+        return {"enabled": True, "message": "2FA has been enabled successfully"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid token or 2FA setup not found")
+
+
+@app.post("/api/auth/2fa/disable")
+async def disable_2fa(
+    password: str,
+    authorization: str = Header(None),
+    x_csrf_token: str = Header(None)
+):
+    """
+    Отключить 2FA
+
+    Args:
+    - password: Пароль пользователя для подтверждения
+
+    Returns:
+    - disabled: True если 2FA успешно отключена
+    """
+    # Verify authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Verify CSRF token
+    csrf = get_csrf_protection()
+        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+    user_id = payload.get('sub')
+    email = payload.get('email')
+
+    # Verify password
+    db = get_db()
+    user = db.get_user_by_email(email)
+    if not user or not verify_password(password, user['password_hash']):
+        raise HTTPException(status_code=403, detail="Invalid password")
+
+    # Disable 2FA
+    if two_factor.disable_2fa(user_id):
+        return {"disabled": True, "message": "2FA has been disabled"}
+    else:
+        raise HTTPException(status_code=400, detail="Failed to disable 2FA")
+
+
+@app.post("/api/auth/2fa/verify")
+async def verify_2fa(
+    token: str,
+    user_id: int,
+    request: Request
+):
+    """
+    Проверить 2FA токен при входе
+
+    Args:
+    - token: TOTP токен или резервный код
+    - user_id: ID пользователя
+
+    Returns:
+    - valid: True если токен валиден
+    """
+    # Get IP address
+    ip_address = request.client.host if request.client else None
+
+    # Check rate limiting
+    if not two_factor.check_rate_limit(user_id, ip_address):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts. Please try again later."
+        )
+
+    # Verify token
+    if two_factor.verify_token(user_id, token, ip_address):
+        return {"valid": True}
+    else:
+        raise HTTPException(status_code=403, detail="Invalid 2FA token")
+
+
+@app.get("/api/auth/2fa/backup-codes")
+async def get_backup_codes(
+    authorization: str = Header(None)
+):
+    """
+    Получить оставшиеся резервные коды
+
+    Returns:
+    - backup_codes: Список резервных кодов
+    """
+    # Verify authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload.get('sub')
+
+    # Get backup codes
+    codes = two_factor.get_backup_codes(user_id)
+
+    return {"backup_codes": codes}
+
+
+@app.post("/api/auth/2fa/regenerate-backup-codes")
+async def regenerate_backup_codes(
+    authorization: str = Header(None),
+    x_csrf_token: str = Header(None)
+):
+    """
+    Сгенерировать новые резервные коды
+
+    Returns:
+    - backup_codes: Новые резервные коды
+    """
+    # Verify authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Verify CSRF token
+    csrf = get_csrf_protection()
+        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+    user_id = payload.get('sub')
+
+    # Regenerate codes
+    new_codes = two_factor.regenerate_backup_codes(user_id)
+
+    return {"backup_codes": new_codes}
+
+
+@app.get("/api/auth/2fa/status")
+async def get_2fa_status(
+    authorization: str = Header(None)
+):
+    """
+    Проверить статус 2FA для пользователя
+
+    Returns:
+    - enabled: True если 2FA включена
+    - recent_attempts: Последние попытки входа
+    """
+    # Verify authentication
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt(token)
+
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload.get('sub')
+
+    # Get 2FA status
+    enabled = two_factor.is_2fa_enabled(user_id)
+    recent_attempts = two_factor.get_recent_attempts(user_id) if enabled else []
+
+    return {
+        "enabled": enabled,
+        "recent_attempts": recent_attempts
+    }
+
+
 # ============================================
 # Schema Validation Helpers
 # ============================================
@@ -969,6 +1941,10 @@ def validate_record_data(data: Dict[str, Any], schema: DatabaseSchema) -> None:
 
     # Validate each field
     for field_name, field_value in data.items():
+        # Skip system fields
+        if field_name in ['id', 'created_at', 'updated_at']:
+            continue
+
         # Find column definition
         column = next((col for col in schema.columns if col.name == field_name), None)
         if not column:
@@ -1021,7 +1997,7 @@ def validate_record_data(data: Dict[str, Any], schema: DatabaseSchema) -> None:
         elif column.type == 'select':
             if not column.options:
                 raise HTTPException(
-                    status_code=400,
+                    status_code=500,
                     detail=f"Field '{field_name}' is select type but has no options defined"
                 )
             if field_value not in column.options:
@@ -1138,45 +2114,55 @@ async def protected_route_example(current_user: Dict = Depends(get_current_user_
 # ============================================
 
 @app.post("/api/sessions/create")
-async def create_session():
-    """Создать новую чат-сессию"""
+async def create_session(current_user = Depends(get_current_user)):
+    """Создать новую чат-сессию для авторизованного пользователя"""
     try:
         db = get_db()
-        session_id = db.create_session()
+        session_id = db.create_session(user_id=current_user['id'])
         return {"session_id": session_id, "success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str):
-    """Получить все сообщения сессии"""
+async def get_session_messages(session_id: str, current_user = Depends(get_current_user)):
+    """Получить все сообщения сессии (только для владельца)"""
     try:
         db = get_db()
+        # Проверяем, принадлежит ли сессия пользователю
+        if not db.session_belongs_to_user(session_id, current_user['id']):
+            raise HTTPException(status_code=403, detail="Access denied to this session")
         messages = db.get_session_messages(session_id)
         return {"session_id": session_id, "messages": messages, "count": len(messages)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/sessions")
-async def get_all_sessions():
-    """Получить список всех сессий"""
+async def get_all_sessions(current_user = Depends(get_current_user)):
+    """Получить список всех сессий пользователя"""
     try:
         db = get_db()
-        sessions = db.get_all_sessions()
+        sessions = db.get_user_sessions(current_user['id'])
         return {"sessions": sessions, "count": len(sessions)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str):
-    """Удалить сессию"""
+async def delete_session(session_id: str, current_user = Depends(get_current_user)):
+    """Удалить сессию (только для владельца)"""
     try:
         db = get_db()
+        # Проверяем, принадлежит ли сессия пользователю
+        if not db.session_belongs_to_user(session_id, current_user['id']):
+            raise HTTPException(status_code=403, detail="Access denied to this session")
         db.delete_session(session_id)
         return {"success": True, "message": f"Session {session_id} deleted"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -2,6 +2,7 @@
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertCircle, RefreshCw, Home } from 'lucide-react';
+import * as Sentry from '@sentry/nextjs';
 
 interface Props {
   children: ReactNode;
@@ -53,10 +54,14 @@ class ErrorBoundary extends Component<Props, State> {
       this.props.onError(error, errorInfo);
     }
 
-    // TODO: Send to error tracking service (Sentry, etc.)
-    // if (process.env.NODE_ENV === 'production') {
-    //   sendErrorToService(error, errorInfo);
-    // }
+    // Send to Sentry error tracking service
+    Sentry.withScope((scope) => {
+      scope.setContext('errorBoundary', {
+        componentStack: errorInfo.componentStack,
+      });
+      scope.setLevel('error');
+      Sentry.captureException(error);
+    });
   }
 
   handleReset = () => {

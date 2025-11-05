@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Navigation from "@/components/Navigation";
 import { ToastProvider } from "@/components/ui/Toast";
+import { PageErrorBoundary } from "@/components/ErrorBoundary";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,14 +30,16 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-950 text-white`}
       >
-        <ToastProvider>
-          <Navigation />
-          <main className="md:pl-60 pt-16">
-            <div className="min-h-screen">
-              {children}
-            </div>
-          </main>
-        </ToastProvider>
+        <PageErrorBoundary>
+          <ToastProvider>
+            <Navigation />
+            <main className="md:pl-60 pt-16">
+              <div className="min-h-screen">
+                {children}
+              </div>
+            </main>
+          </ToastProvider>
+        </PageErrorBoundary>
       </body>
     </html>
   );

@@ -1,225 +1,220 @@
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, CheckCircle, XCircle, DollarSign, Zap, Activity } from 'lucide-react';
-import { API_URL } from '@/lib/config';
+import { useState, useEffect } from 'react'
+import AgentNetworkGraph from '@/components/agents/AgentNetworkGraph'
+import { Activity, Cpu, TrendingUp, Zap, Network, CheckCircle } from 'lucide-react'
 
-export const dynamic = 'force-dynamic';
-
-interface ModelsInfo {
-  [key: string]: {
-    name: string;
-    available: boolean;
-    use_cases: string[];
-    cost: string;
-  };
-}
-
-interface HealthResponse {
+interface Agent {
+  id: string;
+  agent_name: string;
+  agent_type: string;
   status: string;
-  services: Record<string, boolean>;
-  router_stats: { total_calls: number; total_cost: number };
+  skills: string[];
+  task_count: number;
+  success_rate: number;
+  total_cost: number;
 }
 
 export default function AgentsPage() {
-  const [models, setModels] = useState<ModelsInfo | null>(null);
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const fetchData = async () => {
-    try {
-      const [modelsRes, healthRes] = await Promise.all([
-        fetch(`${API_URL}/api/models`),
-        fetch(`${API_URL}/api/health`)
-      ]);
-      
-      const modelsData = await modelsRes.json();
-      const healthData = await healthRes.json();
-      
-      setModels(modelsData);
-      setHealth(healthData);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      setLoading(false);
-    }
-  };
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [systemStatus, setSystemStatus] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
   useEffect(() => {
-    const starter = setTimeout(() => { void fetchData(); }, 0);
-    return () => clearTimeout(starter);
-  }, []);
+    Promise.all([
+      fetch(`${API_BASE}/api/fractal/agents`).then(res => res.json()),
+      fetch(`${API_BASE}/api/fractal/system-status`).then(res => res.json())
+    ])
+      .then(([agentsData, statusData]) => {
+        setAgents(agentsData.agents || [])
+        setSystemStatus(statusData)
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error(err)
+        setLoading(false)
+      })
+  }, [API_BASE])
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 p-8 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading agents...</p>
+        </div>
       </div>
-    );
+    )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900">
-      {/* Header */}
-      <header className="bg-black/30 backdrop-blur-md border-b border-white/10">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center gap-4">
-            <Link href="/">
-              <button className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center text-white transition">
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-            </Link>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Manage AI Agents</h1>
-              <p className="text-sm text-gray-400">Управление и мониторинг AI моделей</p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            FractalAgents Dashboard
+          </h1>
+          <p className="text-gray-600 mt-2">Monitor and manage your self-organizing agent network</p>
         </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 pb-20 md:pb-8">
-        {/* System Health */}
-        {health && (
-          <div className="bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 p-6 mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-white">System Health</h2>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                <span className="text-sm text-green-300">{health.status}</span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-gray-400 text-sm mb-1">Total API Calls</div>
-                <div className="text-2xl font-bold text-white">{health.router_stats.total_calls}</div>
-              </div>
-              <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-gray-400 text-sm mb-1">Total Cost</div>
-                <div className="text-2xl font-bold text-white">${health.router_stats.total_cost.toFixed(4)}</div>
-              </div>
-              <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-gray-400 text-sm mb-1">Active Services</div>
-                <div className="text-2xl font-bold text-white">
-                  {Object.values(health.services).filter(Boolean).length}/5
+        {/* System Status Cards */}
+        {systemStatus && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-600 text-sm">Total Agents</p>
+                  <p className="text-3xl font-bold text-gray-800">{systemStatus.agents?.total || 0}</p>
                 </div>
+                <Cpu className="text-blue-500" size={32} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-green-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-600 text-sm">Connectors</p>
+                  <p className="text-3xl font-bold text-gray-800">{systemStatus.connectors?.total || 0}</p>
+                </div>
+                <Network className="text-green-500" size={32} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-purple-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-600 text-sm">Avg Success Rate</p>
+                  <p className="text-3xl font-bold text-gray-800">
+                    {((systemStatus.collective_memory?.success_rate || 0) * 100).toFixed(0)}%
+                  </p>
+                </div>
+                <TrendingUp className="text-purple-500" size={32} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-yellow-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-600 text-sm">Memory Entries</p>
+                  <p className="text-3xl font-bold text-gray-800">{systemStatus.collective_memory?.total_entries || 0}</p>
+                </div>
+                <Activity className="text-yellow-500" size={32} />
               </div>
             </div>
           </div>
         )}
 
-        {/* AI Models */}
-        <div className="mb-4">
-          <h2 className="text-2xl font-bold text-white mb-6">Available AI Models</h2>
+        {/* Network Visualization */}
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <Network size={24} />
+            Agent Network
+          </h2>
+          <AgentNetworkGraph />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {models && Object.entries(models).map(([key, model]) => (
-            <ModelCard key={key} modelKey={key} model={model} />
-          ))}
-        </div>
-
-        {/* Legend */}
-        <div className="mt-8 bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Cost Legend</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-              <span className="text-sm text-gray-300">FREE - $0</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-              <span className="text-sm text-gray-300">$ - До $0.001</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
-              <span className="text-sm text-gray-300">$$ - До $0.01</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-              <span className="text-sm text-gray-300">$$$ - Более $0.01</span>
-            </div>
+        {/* Agents Table */}
+        <div className="bg-white rounded-xl shadow-md overflow-hidden">
+          <div className="p-6 bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+            <h2 className="text-2xl font-bold">All Agents</h2>
+            <p className="text-blue-100 mt-1">Detailed list of all agents in the network</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Agent
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Type
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Skills
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Tasks
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Success Rate
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {agents.map((agent) => (
+                  <tr key={agent.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${
+                          agent.agent_type === 'root' ? 'bg-gradient-to-r from-purple-500 to-pink-500' :
+                          agent.agent_type === 'specialist' ? 'bg-gradient-to-r from-blue-500 to-cyan-500' :
+                          'bg-gradient-to-r from-green-500 to-emerald-500'
+                        }`}>
+                          {agent.agent_type === 'root' ? <Cpu size={20} /> : <Zap size={20} />}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900">{agent.agent_name}</p>
+                          <p className="text-sm text-gray-500">{agent.id.slice(0, 8)}...</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                        agent.agent_type === 'root' ? 'bg-purple-100 text-purple-800' :
+                        agent.agent_type === 'specialist' ? 'bg-blue-100 text-blue-800' :
+                        'bg-green-100 text-green-800'
+                      }`}>
+                        {agent.agent_type}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {agent.skills.slice(0, 3).map((skill: string, i: number) => (
+                          <span key={i} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">
+                            {skill}
+                          </span>
+                        ))}
+                        {agent.skills.length > 3 && (
+                          <span className="px-2 py-1 bg-gray-200 text-gray-600 rounded text-xs">
+                            +{agent.skills.length - 3}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-gray-900 font-semibold">{agent.task_count || 0}</span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-gray-200 rounded-full h-2 max-w-[100px]">
+                          <div
+                            className="bg-gradient-to-r from-green-500 to-emerald-500 h-2 rounded-full"
+                            style={{ width: `${(agent.success_rate || 0) * 100}%` }}
+                          ></div>
+                        </div>
+                        <span className="text-sm font-semibold text-gray-700">
+                          {((agent.success_rate || 0) * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2 text-green-600">
+                        <CheckCircle size={18} />
+                        <span className="text-sm font-semibold">Active</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-      </main>
-    </div>
-  );
-}
-
-type ModelInfo = { name: string; available: boolean; use_cases: string[]; cost: string };
-function ModelCard({ modelKey, model }: { modelKey: string; model: ModelInfo }) {
-  const costColors: Record<string, string> = {
-    'FREE': 'from-green-500/20 to-green-600/20 border-green-500/30',
-    '$': 'from-yellow-500/20 to-yellow-600/20 border-yellow-500/30',
-    '$$': 'from-orange-500/20 to-orange-600/20 border-orange-500/30',
-    '$$$': 'from-red-500/20 to-red-600/20 border-red-500/30'
-  };
-
-  const costMatch = model.cost.match(/^(FREE|\$+)/);
-  const costLevel = costMatch ? costMatch[1] : '$';
-  const colorClass = costColors[costLevel] || costColors['$'];
-
-  return (
-    <div className={`bg-gradient-to-br ${colorClass} backdrop-blur-md rounded-2xl border p-6 hover:scale-105 transition`}>
-      {/* Header */}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-white mb-1 capitalize">{modelKey}</h3>
-          <p className="text-sm text-gray-300">{model.name}</p>
-        </div>
-        {model.available ? (
-          <CheckCircle className="w-6 h-6 text-green-400 flex-shrink-0" />
-        ) : (
-          <XCircle className="w-6 h-6 text-red-400 flex-shrink-0" />
-        )}
-      </div>
-
-      {/* Status Badge */}
-      <div className="mb-4">
-        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${
-          model.available 
-            ? 'bg-green-500/20 text-green-300 border border-green-500/30' 
-            : 'bg-red-500/20 text-red-300 border border-red-500/30'
-        }`}>
-          <div className={`w-1.5 h-1.5 rounded-full ${model.available ? 'bg-green-400' : 'bg-red-400'}`}></div>
-          {model.available ? 'Available' : 'Offline'}
-        </span>
-      </div>
-
-      {/* Cost */}
-      <div className="mb-4 flex items-center gap-2">
-        <DollarSign className="w-4 h-4 text-gray-400" />
-        <span className="text-white font-medium">{model.cost}</span>
-      </div>
-
-      {/* Use Cases */}
-      <div className="mb-4">
-        <div className="text-xs text-gray-400 mb-2">Best for:</div>
-        <div className="flex flex-wrap gap-1">
-          {model.use_cases.map((useCase: string) => (
-            <span 
-              key={useCase}
-              className="px-2 py-1 bg-white/10 rounded text-xs text-gray-200"
-            >
-              {useCase.replace('_', ' ')}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-2 pt-4 border-t border-white/10">
-        <div className="flex items-center gap-2">
-          <Zap className="w-4 h-4 text-blue-400" />
-          <span className="text-xs text-gray-300">
-            {model.available ? 'Ready' : 'Unavailable'}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-purple-400" />
-          <span className="text-xs text-gray-300">Auto-Select</span>
-        </div>
       </div>
     </div>
-  );
+  )
 }

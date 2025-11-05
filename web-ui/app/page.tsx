@@ -13,24 +13,23 @@ import {
   ChevronRight,
   Activity,
   Database,
-  BarChart3,
-  PieChart,
-  LineChart
+  BarChart3
 } from 'lucide-react';
-import {
-  LineChart as RechartsLine,
-  Line,
-  PieChart as RechartsPie,
-  Pie,
-  BarChart as RechartsBar,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell
-} from 'recharts';
+// Dynamic import for heavy chart library
+import dynamicImport from 'next/dynamic';
+
+// Lazy load chart components
+const ChartsComponent = dynamicImport(
+  () => import('@/components/DashboardCharts'),
+  {
+    loading: () => (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      </div>
+    ),
+    ssr: false
+  }
+);
 
 export const dynamic = 'force-dynamic';
 
@@ -55,12 +54,12 @@ interface ActivityItem {
 }
 
 interface ChartDataPoint {
-  [key: string]: any;
   date?: string;
   requests?: number;
   model?: string;
   workflow?: string;
   executions?: number;
+  [key: string]: string | number | undefined;
 }
 
 export default function Dashboard() {
@@ -208,7 +207,6 @@ export default function Dashboard() {
     );
   }
 
-  const COLORS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#6366F1'];
 
   return (
     <div className="p-6 space-y-6">
@@ -375,94 +373,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* AI Requests Over Time */}
-        <div className="bg-gray-800 rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <LineChart className="w-5 h-5" />
-            AI Requests (Last 7 Days)
-          </h3>
-          {aiRequestsChart.length > 0 ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <RechartsLine data={aiRequestsChart}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="date" stroke="#9CA3AF" fontSize={12} />
-                <YAxis stroke="#9CA3AF" fontSize={12} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
-                  labelStyle={{ color: '#F3F4F6' }}
-                />
-                <Line type="monotone" dataKey="requests" stroke="#3B82F6" strokeWidth={2} />
-              </RechartsLine>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[250px] flex items-center justify-center text-gray-400">
-              No data available
-            </div>
-          )}
-        </div>
-
-        {/* Model Usage Distribution */}
-        <div className="bg-gray-800 rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <PieChart className="w-5 h-5" />
-            Model Usage Distribution
-          </h3>
-          {modelUsageChart.length > 0 ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <RechartsPie>
-                <Pie
-                  data={modelUsageChart}
-                  dataKey="requests"
-                  nameKey="model"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={80}
-                  label
-                >
-                  {modelUsageChart.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
-                />
-              </RechartsPie>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[250px] flex items-center justify-center text-gray-400">
-              No data available
-            </div>
-          )}
-        </div>
-
-        {/* Workflow Execution Stats */}
-        <div className="bg-gray-800 rounded-xl p-6 lg:col-span-2">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <BarChart3 className="w-5 h-5" />
-            Workflow Execution Stats (Top 10)
-          </h3>
-          {workflowStatsChart.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <RechartsBar data={workflowStatsChart}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="workflow" stroke="#9CA3AF" fontSize={12} />
-                <YAxis stroke="#9CA3AF" fontSize={12} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
-                  labelStyle={{ color: '#F3F4F6' }}
-                />
-                <Bar dataKey="executions" fill="#8B5CF6" />
-              </RechartsBar>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[300px] flex items-center justify-center text-gray-400">
-              No workflow executions yet
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Charts Section - Lazy Loaded */}
+      <ChartsComponent
+        aiRequestsData={aiRequestsChart}
+        modelUsageData={modelUsageChart}
+        workflowStatsData={workflowStatsChart}
+      />
 
       {/* New Project Modal */}
       {showNewProjectModal && (

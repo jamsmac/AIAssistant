@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { Mail, Lock, User, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 import { useApi } from '@/lib/useApi';
 import { useToast } from '@/components/ui/Toast';
+import OAuthButtons from '@/components/auth/OAuthButtons';
+import type { AuthResponse } from '@/types/api';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -49,13 +51,8 @@ export default function RegisterPage() {
     try {
       setLoading(true);
 
-      const response = await api.post<{ token: string; user: any }>('/api/auth/register', {
-        email,
-        password,
-      });
-
-      // Store token
-      localStorage.setItem('token', response.token);
+      // Use the new register method that handles cookies
+      const response = await api.register(email, password);
 
       showToast('Account created successfully!', 'success');
 
@@ -63,8 +60,9 @@ export default function RegisterPage() {
       setTimeout(() => {
         router.push('/');
       }, 500);
-    } catch (err: any) {
-      setError(err.message || 'Registration failed. Please try again.');
+    } catch (err) {
+      const error = err as Error;
+      setError(error.message || 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -197,6 +195,19 @@ export default function RegisterPage() {
               )}
             </button>
           </form>
+
+          {/* OAuth Registration Options */}
+          <div className="mt-6">
+            <OAuthButtons
+              onSuccess={(user) => {
+                showToast('Registration successful!', 'success');
+                router.push('/');
+              }}
+              onError={(error) => {
+                setError(error);
+              }}
+            />
+          </div>
 
           {/* Divider */}
           <div className="relative my-6">

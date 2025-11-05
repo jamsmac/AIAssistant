@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Interface Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold mb-8 bg-gradient-to-r from-blue-400 to-purple-600 bg-clip-text text-transparent">
+            Chat Interface Test
+        </h1>
+
+        <div class="bg-gray-800 rounded-lg p-6 mb-6">
+            <h2 class="text-xl mb-4">Test Messages</h2>
+
+            <div class="space-y-4">
+                <button onclick="sendMessage('Hello!')"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition">
+                    Send "Hello!"
+                </button>
+
+                <button onclick="sendMessage('Can you help me with coding?')"
+                    class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition">
+                    Send "Help with coding"
+                </button>
+
+                <button onclick="sendMessage('Tell me about agents')"
+                    class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition">
+                    Send "About agents"
+                </button>
+
+                <button onclick="sendMessage('Thank you!')"
+                    class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg transition">
+                    Send "Thank you!"
+                </button>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h2 class="text-xl mb-4">Chat Messages</h2>
+            <div id="messages" class="space-y-4 max-h-96 overflow-y-auto">
+                <div class="text-gray-400">Waiting for messages...</div>
+            </div>
+        </div>
+
+        <div class="mt-6 bg-gray-800 rounded-lg p-4">
+            <div class="flex gap-2">
+                <input type="text" id="customMessage"
+                    placeholder="Type your message..."
+                    class="flex-1 px-4 py-2 bg-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="sendCustomMessage()"
+                    class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition">
+                    Send
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const messagesDiv = document.getElementById('messages');
+        let sessionId = `session-${Date.now()}`;
+
+        async function sendMessage(message) {
+            // Add user message to UI
+            addMessageToUI('user', message);
+
+            try {
+                // For now, simulate a response since API might not be ready
+                setTimeout(() => {
+                    let response = '';
+
+                    if (message.toLowerCase().includes('hello')) {
+                        response = "Hello! I'm your AI assistant. I can help you with coding, answer questions about the system, or discuss your projects. What would you like to know?";
+                    } else if (message.toLowerCase().includes('help')) {
+                        response = "I can help you with:\n• Coding Questions\n• System Features\n• Project Management\n• Analytics\n\nWhat specific area interests you?";
+                    } else if (message.toLowerCase().includes('agent')) {
+                        response = "Our FractalAgents system is a self-organizing network of AI agents that can collaborate on complex tasks. Check out /agents to see the visualization!";
+                    } else if (message.toLowerCase().includes('thank')) {
+                        response = "You're welcome! Feel free to ask more questions anytime.";
+                    } else {
+                        response = `I understand you're asking about "${message}". The system has many features to explore including the agent network, workflows, and analytics dashboards.`;
+                    }
+
+                    addMessageToUI('assistant', response);
+                }, 1000);
+
+                // Try actual API call (might fail if not ready)
+                /*
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, sessionId })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    addMessageToUI('assistant', data.message);
+                }
+                */
+
+            } catch (error) {
+                console.error('Chat error:', error);
+                addMessageToUI('system', 'Error connecting to chat service');
+            }
+        }
+
+        function sendCustomMessage() {
+            const input = document.getElementById('customMessage');
+            if (input.value.trim()) {
+                sendMessage(input.value);
+                input.value = '';
+            }
+        }
+
+        function addMessageToUI(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = role === 'user'
+                ? 'flex justify-end'
+                : 'flex justify-start';
+
+            const bubble = document.createElement('div');
+            bubble.className = role === 'user'
+                ? 'max-w-md px-4 py-2 bg-blue-600 rounded-lg'
+                : role === 'assistant'
+                ? 'max-w-md px-4 py-2 bg-gray-700 rounded-lg'
+                : 'max-w-md px-4 py-2 bg-red-600 rounded-lg';
+
+            bubble.innerHTML = `
+                <div class="text-xs opacity-75 mb-1">${role}</div>
+                <div class="whitespace-pre-wrap">${content}</div>
+            `;
+
+            messageDiv.appendChild(bubble);
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Allow Enter key to send message
+        document.getElementById('customMessage').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendCustomMessage();
+            }
+        });
+
+        // Initial message
+        setTimeout(() => {
+            addMessageToUI('assistant', 'Welcome to the Chat Interface Test! Try clicking the test buttons above or type your own message below.');
+        }, 500);
+    </script>
+</body>
+</html>

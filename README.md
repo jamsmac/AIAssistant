@@ -1,6 +1,6 @@
 # 🤖 AI Assistant Platform
 
-A comprehensive full-stack platform for managing AI models, projects, databases, workflows, and integrations with advanced routing, caching, and analytics.
+A comprehensive full-stack platform for managing AI models, projects, databases, workflows, and integrations with advanced routing, caching, analytics, and **Model Context Protocol (MCP)** support.
 
 ## ✨ Key Features
 
@@ -55,6 +55,13 @@ A comprehensive full-stack platform for managing AI models, projects, databases,
 - **Loading States**: Skeleton loaders and spinners for better UX
 - **Responsive Design**: Works on desktop, tablet, and mobile
 
+### 🔌 Model Context Protocol (MCP)
+- **Full MCP Support**: Industry-standard protocol for AI tool integration
+- **12 MCP Tools**: Project management, databases, chat, workflows, analytics
+- **Claude Desktop**: Native integration with Claude Desktop app
+- **Extensible**: Easy to add custom MCP tools
+- **Type-Safe**: Pydantic models for all tool inputs/outputs
+
 ## 🏗️ Project Architecture
 
 ```
@@ -65,7 +72,8 @@ autopilot-core/
 │   ├── ranking_collector.py   # Rankings Scraper
 │   ├── rate_limiter.py         # Rate Limiting System
 │   ├── workflow_engine.py      # Workflow Execution Engine
-│   ├── mcp_client.py           # MCP Integration Client
+│   ├── mcp_client.py           # MCP Integration Client (Gmail, Drive, Telegram)
+│   ├── mcp_server.py           # MCP Server (Claude Desktop integration)
 │   └── models.py               # AI Models Configuration
 │
 ├── api/                        # 🔌 Backend API
@@ -202,6 +210,25 @@ npm run dev
 4. **Register Account**: Click "Register" and create your first user
 5. **Login**: Use your credentials to access the dashboard
 6. **Create Project**: Start by creating your first project
+
+### 🔌 Optional: MCP Setup (Claude Desktop Integration)
+
+Enable Claude Desktop to interact with your platform:
+
+```bash
+# Install MCP SDK
+pip install 'mcp[cli]>=1.20.0'
+
+# Copy configuration to Claude Desktop
+cp claude_desktop_config.json ~/Library/Application\ Support/Claude/
+
+# Restart Claude Desktop
+
+# Test MCP server
+python test_mcp_server.py
+```
+
+**Full Guide**: See [MCP_SETUP_GUIDE.md](MCP_SETUP_GUIDE.md) and [MCP_README.md](MCP_README.md)
 
 ## 📊 Database Schema
 

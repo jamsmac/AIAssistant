@@ -1,0 +1,400 @@
+"""
+Dashboard Router - Handles dashboard, metrics, and monitoring endpoints
+"""
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+from datetime import datetime, timedelta
+import json
+import os
+import sys
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from agents.database import HistoryDatabase, get_db
+from agents.auth import get_current_user
+from agents.monitoring import MetricsCollector
+
+router = APIRouter(prefix="/api", tags=["dashboard", "monitoring"])
+
+# Initialize services
+db = Database()
+metrics = MetricsCollector(db)
+
+# Pydantic models
+class StatsResponse(BaseModel):
+    total_users: int
+    total_projects: int
+    total_workflows: int
+    total_ai_requests: int
+    total_tokens_used: int
+    total_cost: float
+    active_sessions: int
+
+class HealthResponse(BaseModel):
+    status: str
+    checks: Dict[str, bool]
+    timestamp: str
+
+class DashboardStats(BaseModel):
+    user_stats: Dict[str, Any]
+    ai_stats: Dict[str, Any]
+    project_stats: Dict[str, Any]
+    workflow_stats: Dict[str, Any]
+    cost_stats: Dict[str, Any]
+
+class ActivityItem(BaseModel):
+    type: str  # chat, project, workflow, integration
+    action: str  # created, updated, executed, connected
+    title: str
+    description: Optional[str]
+    timestamp: str
+    metadata: Optional[Dict[str, Any]] = None
+
+class MetricData(BaseModel):
+    name: str
+    value: float
+    unit: str
+    timestamp: str
+    tags: Optional[Dict[str, str]] = None
+
+class AlertItem(BaseModel):
+    id: int
+    level: str  # info, warning, error, critical
+    title: str
+    message: str
+    source: str
+    timestamp: str
+    resolved: bool
+
+# Dashboard endpoints
+@router.get("/dashboard/stats", response_model=DashboardStats)
+async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
+    """Get comprehensive dashboard statistics"""
+
+    # User stats
+    user_sessions = db.get_user_sessions(current_user['id'])
+    user_stats = {
+        "total_sessions": len(user_sessions),
+        "total_messages": sum(s.get('message_count', 0) for s in user_sessions),
+        "member_since": current_user.get('created_at'),
+        "last_active": datetime.now().isoformat()
+    }
+
+    # AI stats
+    ai_usage = db.get_user_ai_usage(current_user['id'])
+    ai_stats = {
+        "total_requests": ai_usage.get('total_requests', 0),
+        "total_tokens": ai_usage.get('total_tokens', 0),
+        "total_cost": ai_usage.get('total_cost', 0.0),
+        "favorite_model": ai_usage.get('favorite_model', 'N/A'),
+        "avg_response_time": ai_usage.get('avg_response_time', 0.0)
+    }
+
+    # Project stats
+    projects = db.get_user_projects(current_user['id'])
+    total_databases = 0
+    total_records = 0
+    for project in projects:
+        databases = db.get_project_databases(project['id'])
+        total_databases += len(databases)
+        for database in databases:
+            records = db.get_database_records(database['id'])
+            total_records += len(records)
+
+    project_stats = {
+        "total_projects": len(projects),
+        "total_databases": total_databases,
+        "total_records": total_records,
+        "most_recent_project": projects[0]['name'] if projects else None
+    }
+
+    # Workflow stats
+    workflows = db.get_user_workflows(current_user['id'])
+    total_executions = 0
+    successful_executions = 0
+    for workflow in workflows:
+        executions = db.get_workflow_executions(workflow['id'])
+        total_executions += len(executions)
+        successful_executions += sum(1 for e in executions if e.get('status') == 'completed')
+
+    workflow_stats = {
+        "total_workflows": len(workflows),
+        "active_workflows": sum(1 for w in workflows if w.get('is_active')),
+        "total_executions": total_executions,
+        "success_rate": (successful_executions / total_executions * 100) if total_executions > 0 else 0,
+        "last_execution": executions[0]['started_at'] if executions else None
+    }
+
+    # Cost breakdown
+    cost_stats = {
+        "today": ai_usage.get('cost_today', 0.0),
+        "this_week": ai_usage.get('cost_week', 0.0),
+        "this_month": ai_usage.get('cost_month', 0.0),
+        "all_time": ai_usage.get('total_cost', 0.0),
+        "by_model": ai_usage.get('cost_by_model', {})
+    }
+
+    return DashboardStats(
+        user_stats=user_stats,
+        ai_stats=ai_stats,
+        project_stats=project_stats,
+        workflow_stats=workflow_stats,
+        cost_stats=cost_stats
+    )
+
+@router.get("/dashboard/activity", response_model=List[ActivityItem])
+async def get_recent_activity(
+    limit: int = 20,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get recent user activity"""
+    activities = []
+
+    # Get recent chat sessions
+    sessions = db.get_user_sessions(current_user['id'])[:5]
+    for session in sessions:
+        activities.append(ActivityItem(
+            type="chat",
+            action="created",
+            title=f"Chat: {session['name']}",
+            description=f"{session.get('message_count', 0)} messages",
+            timestamp=session['created_at'],
+            metadata={"session_id": session['id']}
+        ))
+
+    # Get recent projects
+    projects = db.get_user_projects(current_user['id'])[:5]
+    for project in projects:
+        activities.append(ActivityItem(
+            type="project",
+            action="created",
+            title=f"Project: {project['name']}",
+            description=project.get('description'),
+            timestamp=project['created_at'],
+            metadata={"project_id": project['id']}
+        ))
+
+    # Get recent workflow executions
+    workflows = db.get_user_workflows(current_user['id'])
+    for workflow in workflows[:5]:
+        executions = db.get_workflow_executions(workflow['id'], limit=1)
+        if executions:
+            activities.append(ActivityItem(
+                type="workflow",
+                action="executed",
+                title=f"Workflow: {workflow['name']}",
+                description=f"Status: {executions[0]['status']}",
+                timestamp=executions[0]['started_at'],
+                metadata={"workflow_id": workflow['id'], "execution_id": executions[0]['id']}
+            ))
+
+    # Sort by timestamp and return
+    activities.sort(key=lambda x: x.timestamp, reverse=True)
+    return activities[:limit]
+
+# Chart data endpoints
+@router.get("/dashboard/charts/ai-requests")
+async def get_ai_requests_chart(
+    period: str = "7d",
+    current_user: dict = Depends(get_current_user)
+):
+    """Get AI requests chart data"""
+    # Parse period
+    if period == "24h":
+        start_date = datetime.now() - timedelta(hours=24)
+        interval = "hour"
+    elif period == "7d":
+        start_date = datetime.now() - timedelta(days=7)
+        interval = "day"
+    elif period == "30d":
+        start_date = datetime.now() - timedelta(days=30)
+        interval = "day"
+    else:
+        start_date = datetime.now() - timedelta(days=7)
+        interval = "day"
+
+    # Get data from database
+    data = db.get_ai_requests_timeline(
+        user_id=current_user['id'],
+        start_date=start_date.isoformat(),
+        interval=interval
+    )
+
+    return {
+        "labels": [d['timestamp'] for d in data],
+        "datasets": [
+            {
+                "label": "AI Requests",
+                "data": [d['count'] for d in data],
+                "borderColor": "rgb(59, 130, 246)",
+                "backgroundColor": "rgba(59, 130, 246, 0.1)"
+            }
+        ]
+    }
+
+@router.get("/dashboard/charts/model-usage")
+async def get_model_usage_chart(current_user: dict = Depends(get_current_user)):
+    """Get model usage distribution chart data"""
+    usage = db.get_model_usage_distribution(current_user['id'])
+
+    return {
+        "labels": list(usage.keys()),
+        "datasets": [
+            {
+                "label": "Model Usage",
+                "data": list(usage.values()),
+                "backgroundColor": [
+                    "rgba(59, 130, 246, 0.8)",   # Blue
+                    "rgba(34, 197, 94, 0.8)",    # Green
+                    "rgba(168, 85, 247, 0.8)",   # Purple
+                    "rgba(251, 146, 60, 0.8)",   # Orange
+                    "rgba(244, 63, 94, 0.8)",    # Red
+                    "rgba(163, 163, 163, 0.8)"   # Gray
+                ]
+            }
+        ]
+    }
+
+@router.get("/dashboard/charts/workflow-stats")
+async def get_workflow_stats_chart(current_user: dict = Depends(get_current_user)):
+    """Get workflow execution statistics chart"""
+    workflows = db.get_user_workflows(current_user['id'])
+
+    stats = []
+    for workflow in workflows[:10]:  # Top 10 workflows
+        executions = db.get_workflow_executions(workflow['id'])
+        successful = sum(1 for e in executions if e.get('status') == 'completed')
+        failed = sum(1 for e in executions if e.get('status') == 'failed')
+
+        stats.append({
+            "name": workflow['name'],
+            "successful": successful,
+            "failed": failed
+        })
+
+    return {
+        "labels": [s['name'] for s in stats],
+        "datasets": [
+            {
+                "label": "Successful",
+                "data": [s['successful'] for s in stats],
+                "backgroundColor": "rgba(34, 197, 94, 0.8)"
+            },
+            {
+                "label": "Failed",
+                "data": [s['failed'] for s in stats],
+                "backgroundColor": "rgba(244, 63, 94, 0.8)"
+            }
+        ]
+    }
+
+# Health & monitoring endpoints
+@router.get("/health", response_model=HealthResponse)
+async def health_check():
+    """System health check"""
+    checks = {}
+
+    # Check database
+    try:
+        db.get_user_by_id(1)  # Simple query
+        checks['database'] = True
+    except:
+        checks['database'] = False
+
+    # Check Redis (if configured)
+    try:
+        import redis
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        checks['redis'] = True
+    except:
+        checks['redis'] = False
+
+    # Check AI providers
+    checks['ai_providers'] = bool(os.getenv('OPENAI_API_KEY') or os.getenv('ANTHROPIC_API_KEY'))
+
+    # Overall status
+    all_healthy = all(checks.values())
+
+    return HealthResponse(
+        status="healthy" if all_healthy else "degraded",
+        checks=checks,
+        timestamp=datetime.now().isoformat()
+    )
+
+@router.get("/stats", response_model=StatsResponse)
+async def get_system_stats():
+    """Get system-wide statistics"""
+    stats = db.get_system_stats()
+
+    return StatsResponse(
+        total_users=stats.get('total_users', 0),
+        total_projects=stats.get('total_projects', 0),
+        total_workflows=stats.get('total_workflows', 0),
+        total_ai_requests=stats.get('total_ai_requests', 0),
+        total_tokens_used=stats.get('total_tokens_used', 0),
+        total_cost=stats.get('total_cost', 0.0),
+        active_sessions=stats.get('active_sessions', 0)
+    )
+
+@router.get("/metrics")
+async def get_metrics():
+    """Get system metrics (Prometheus format)"""
+    metrics_data = await metrics.collect()
+
+    # Format as Prometheus text format
+    output = []
+    for metric in metrics_data:
+        output.append(f"# HELP {metric['name']} {metric.get('help', '')}")
+        output.append(f"# TYPE {metric['name']} {metric.get('type', 'gauge')}")
+        output.append(f"{metric['name']} {metric['value']}")
+
+    return "\n".join(output)
+
+@router.get("/alerts")
+async def get_alerts(
+    resolved: Optional[bool] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get system alerts"""
+    alerts = db.get_alerts(user_id=current_user['id'], resolved=resolved)
+
+    return [
+        AlertItem(
+            id=alert['id'],
+            level=alert['level'],
+            title=alert['title'],
+            message=alert['message'],
+            source=alert['source'],
+            timestamp=alert['created_at'],
+            resolved=alert['resolved']
+        )
+        for alert in alerts
+    ]
+
+@router.post("/alerts/{alert_id}/resolve")
+async def resolve_alert(
+    alert_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Resolve an alert"""
+    db.resolve_alert(alert_id, current_user['id'])
+    return {"message": "Alert resolved"}
+
+@router.get("/system-status")
+async def get_system_status():
+    """Get detailed system status"""
+    return {
+        "version": "1.0.0",
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "uptime": metrics.get_uptime(),
+        "memory_usage": metrics.get_memory_usage(),
+        "cpu_usage": metrics.get_cpu_usage(),
+        "active_connections": metrics.get_active_connections(),
+        "database_connections": db.get_connection_count(),
+        "cache_hit_rate": metrics.get_cache_hit_rate(),
+        "timestamp": datetime.now().isoformat()
+    }

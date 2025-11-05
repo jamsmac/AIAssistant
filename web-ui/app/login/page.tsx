@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { Mail, Lock, Loader2, AlertCircle } from 'lucide-react';
 import { useApi } from '@/lib/useApi';
 import { useToast } from '@/components/ui/Toast';
+import OAuthButtons from '@/components/auth/OAuthButtons';
+import type { AuthResponse } from '@/types/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -29,13 +31,8 @@ export default function LoginPage() {
     try {
       setLoading(true);
 
-      const response = await api.post<{ token: string; user: any }>('/api/auth/login', {
-        email,
-        password,
-      });
-
-      // Store token
-      localStorage.setItem('token', response.token);
+      // Use the new login method that handles cookies
+      const response = await api.login(email, password);
 
       showToast('Login successful!', 'success');
 
@@ -43,8 +40,9 @@ export default function LoginPage() {
       setTimeout(() => {
         router.push('/');
       }, 500);
-    } catch (err: any) {
-      setError(err.message || 'Login failed. Please try again.');
+    } catch (err) {
+      const error = err as Error;
+      setError(error.message || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -130,6 +128,19 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          {/* OAuth Login Options */}
+          <div className="mt-6">
+            <OAuthButtons
+              onSuccess={(user) => {
+                showToast('Login successful!', 'success');
+                router.push('/');
+              }}
+              onError={(error) => {
+                setError(error);
+              }}
+            />
+          </div>
 
           {/* Divider */}
           <div className="relative my-6">

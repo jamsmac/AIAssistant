@@ -21,8 +21,11 @@ sqlalchemy==1.4,<2.1
 # Web Framework
 fastapi==0.115.4
 uvicorn[standard]==0.32.0
-pydantic==2.9.2
+pydantic>=2.12.0
 pydantic-settings==2.6.0
+
+# MCP (Model Context Protocol)
+mcp[cli]>=1.20.0
 
 # Utilities
 httpx==0.27.2
@@ -37,6 +40,12 @@ pyyaml==6.0.2
 bcrypt==4.2.0
 PyJWT==2.9.0
 email-validator==2.3.0
+pyotp==2.9.0
+qrcode[pil]==7.4.2
+
+# Monitoring & Error Tracking
+sentry-sdk[fastapi]==2.0.0
+psutil==5.9.8
 
 # Web Scraping (for rankings collector)
 beautifulsoup4==4.12.3

@@ -64,7 +64,7 @@ curl https://aiassistant-production-7a4d.up.railway.app/api/health
 
 **Шаг 1:** Проверьте статус в Railway Dashboard
 ```
-https://railway.app/dashboard → AIAssistant → Deployments
+https://railway.app/dashboard → AI Assistant Platform → Deployments
 ```
 
 **Шаг 2:** Посмотрите логи
