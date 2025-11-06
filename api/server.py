@@ -1647,7 +1647,7 @@ async def verify_csrf_token(
 
     # Проверяем CSRF токен
     csrf = get_csrf_protection()
-        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+    if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
     return payload
@@ -1685,7 +1685,7 @@ async def setup_2fa(
 
     # Verify CSRF token
     csrf = get_csrf_protection()
-        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+    if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
     user_id = payload.get('sub')
@@ -1728,7 +1728,7 @@ async def enable_2fa(
 
     # Verify CSRF token
     csrf = get_csrf_protection()
-        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+    if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
     user_id = payload.get('sub')
@@ -1767,7 +1767,7 @@ async def disable_2fa(
 
     # Verify CSRF token
     csrf = get_csrf_protection()
-        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+    if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
     user_id = payload.get('sub')
@@ -1870,7 +1870,7 @@ async def regenerate_backup_codes(
 
     # Verify CSRF token
     csrf = get_csrf_protection()
-        if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
+    if not csrf.verify_token(x_csrf_token, str(payload.get('sub', ''))):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
     user_id = payload.get('sub')
