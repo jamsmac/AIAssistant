@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useApi } from '@/lib/useApi';
+import ThemeToggle from './ThemeToggle';
 import {
   Home,
   MessageSquare,
@@ -110,10 +111,10 @@ export default function Navigation() {
     <>
       {/* Desktop Sidebar */}
       <aside className="hidden md:fixed md:inset-y-0 md:left-0 md:flex md:w-60 md:flex-col">
-        <div className="flex min-h-0 flex-1 flex-col bg-gray-900 border-r border-gray-800">
+        <div className="flex min-h-0 flex-1 flex-col bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 transition-colors duration-200">
           {/* Logo/Brand */}
-          <div className="flex h-16 shrink-0 items-center px-6 border-b border-gray-800">
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-600 bg-clip-text text-transparent">
+          <div className="flex h-16 shrink-0 items-center px-6 border-b border-gray-200 dark:border-gray-800 transition-colors">
+            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-500 to-purple-600 bg-clip-text text-transparent">
               Autopilot Core
             </h1>
           </div>
@@ -128,13 +129,14 @@ export default function Navigation() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-gray-900 ${
                     active
                       ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/20'
-                      : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-800'
                   }`}
+                  aria-current={active ? 'page' : undefined}
                 >
-                  <Icon className="w-5 h-5 shrink-0" />
+                  <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
                   <span>{item.label}</span>
                 </Link>
               );
@@ -142,9 +144,9 @@ export default function Navigation() {
           </nav>
 
           {/* Bottom User Section */}
-          <div className="border-t border-gray-800 p-4">
-            <div className="flex items-center gap-3 px-3 py-2 text-sm text-gray-400">
-              <User className="w-5 h-5" />
+          <div className="border-t border-gray-200 dark:border-gray-800 p-4 transition-colors">
+            <div className="flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-gray-400">
+              <User className="w-5 h-5" aria-hidden="true" />
               <span className="truncate">{userEmail || 'Loading...'}</span>
             </div>
           </div>
@@ -153,18 +155,20 @@ export default function Navigation() {
 
       {/* Top Bar */}
       <header className="fixed top-0 left-0 right-0 z-40 md:left-60">
-        <div className="flex h-16 items-center justify-between gap-4 bg-gray-950/80 backdrop-blur-xl border-b border-gray-800 px-4 md:px-6">
+        <div className="flex h-16 items-center justify-between gap-4 bg-white/80 dark:bg-gray-950/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800 px-4 md:px-6 transition-colors duration-200">
           {/* Mobile Menu Button */}
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+            className="md:hidden p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-gray-950"
+            aria-label="Toggle mobile menu"
+            aria-expanded={isMobileMenuOpen}
           >
             <Menu className="w-6 h-6" />
           </button>
 
           {/* Page Title (Desktop) */}
           <div className="hidden md:block">
-            <h2 className="text-lg font-semibold text-white">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
               {navItems.find((item) => isActive(item.href))?.label || 'Dashboard'}
             </h2>
           </div>
@@ -176,16 +180,23 @@ export default function Navigation() {
 
           {/* Right Side Actions */}
           <div className="flex items-center gap-2">
+            {/* Theme Toggle */}
+            <ThemeToggle />
+
             {/* Notifications */}
-            <button className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors relative">
+            <button
+              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-800 transition-colors relative focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-gray-950"
+              aria-label="Notifications"
+            >
               <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full"></span>
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" aria-hidden="true"></span>
             </button>
 
             {/* Settings */}
             <Link
               href="/settings"
-              className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-gray-950"
+              aria-label="Settings"
             >
               <Settings className="w-5 h-5" />
             </Link>

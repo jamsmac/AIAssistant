@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, EmailStr
 from typing import Literal, Optional, List, Dict, Any, Union
@@ -20,6 +20,8 @@ from fastapi.responses import StreamingResponse
 import asyncio
 import json
 import time
+import csv
+import io
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
@@ -234,6 +236,16 @@ async def startup_event():
     """Initialize services on startup"""
     logger.info("Starting AI Development System API")
 
+    # Start workflow scheduler for scheduled triggers
+    try:
+        import sys
+        sys.path.append(str(Path(__file__).parent.parent / "agents"))
+        from workflow_scheduler import start_scheduler
+        start_scheduler()
+        logger.info("Workflow scheduler started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start workflow scheduler: {e}")
+
     # Start system monitoring
     asyncio.create_task(system_monitor.start(interval=60))
 
@@ -260,6 +272,15 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown"""
     logger.info("Shutting down AI Development System API")
+
+    # Stop workflow scheduler
+    try:
+        from workflow_scheduler import stop_scheduler
+        stop_scheduler()
+        logger.info("Workflow scheduler stopped")
+    except Exception as e:
+        logger.error(f"Error stopping workflow scheduler: {e}")
+
     system_monitor.stop()
 
 # ============================================
@@ -393,6 +414,10 @@ class ColumnDefinition(BaseModel):
     type: Literal['text', 'number', 'boolean', 'date', 'select'] = Field(..., description="Тип данных")
     required: bool = Field(default=False, description="Обязательное поле")
     options: Optional[List[str]] = Field(None, description="Опции для select type")
+    min_length: Optional[int] = Field(None, description="Минимальная длина для text")
+    max_length: Optional[int] = Field(None, description="Максимальная длина для text")
+    min_value: Optional[float] = Field(None, description="Минимальное значение для number")
+    max_value: Optional[float] = Field(None, description="Максимальное значение для number")
 
 class DatabaseSchema(BaseModel):
     """Схема базы данных"""
@@ -507,8 +532,9 @@ class IntegrationInfo(BaseModel):
 class ConnectRequest(BaseModel):
     """Request to connect an integration"""
     integration_type: str
-    # For Telegram (bot token)
+    # For Telegram (bot token and chat_id)
     bot_token: Optional[str] = None
+    chat_id: Optional[str] = None
 
 
 # ============================================
@@ -1974,36 +2000,90 @@ def validate_record_data(data: Dict[str, Any], schema: DatabaseSchema) -> None:
             if not isinstance(field_value, str):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Field '{field_name}' must be a string"
+                    detail=f"Field '{field_name}' must be a string (got {type(field_value).__name__})"
+                )
+            # Length validation
+            if column.min_length is not None and len(field_value) < column.min_length:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Field '{field_name}' must be at least {column.min_length} characters long (got {len(field_value)})"
+                )
+            if column.max_length is not None and len(field_value) > column.max_length:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Field '{field_name}' must be at most {column.max_length} characters long (got {len(field_value)})"
                 )
 
         elif column.type == 'number':
             if not isinstance(field_value, (int, float)):
+                # Try to parse string to number
+                if isinstance(field_value, str):
+                    try:
+                        field_value = float(field_value)
+                        # Update the data dict with parsed value
+                        data[field_name] = field_value
+                    except ValueError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Field '{field_name}' must be a number (got '{field_value}')"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Field '{field_name}' must be a number (got {type(field_value).__name__})"
+                    )
+            # Range validation
+            if column.min_value is not None and field_value < column.min_value:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Field '{field_name}' must be a number"
+                    detail=f"Field '{field_name}' must be at least {column.min_value} (got {field_value})"
+                )
+            if column.max_value is not None and field_value > column.max_value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Field '{field_name}' must be at most {column.max_value} (got {field_value})"
                 )
 
         elif column.type == 'boolean':
             if not isinstance(field_value, bool):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Field '{field_name}' must be a boolean"
-                )
+                # Try to parse string to boolean
+                if isinstance(field_value, str):
+                    if field_value.lower() in ('true', '1', 'yes'):
+                        data[field_name] = True
+                    elif field_value.lower() in ('false', '0', 'no'):
+                        data[field_name] = False
+                    else:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Field '{field_name}' must be a boolean (got '{field_value}'). Use true/false"
+                        )
+                elif isinstance(field_value, (int, float)):
+                    data[field_name] = bool(field_value)
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Field '{field_name}' must be a boolean (got {type(field_value).__name__})"
+                    )
 
         elif column.type == 'date':
             if not isinstance(field_value, str):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Field '{field_name}' must be a date string (YYYY-MM-DD)"
+                    detail=f"Field '{field_name}' must be a date string in YYYY-MM-DD format (got {type(field_value).__name__})"
                 )
             # Validate date format
             try:
-                dt.strptime(field_value, '%Y-%m-%d')
+                parsed_date = dt.strptime(field_value, '%Y-%m-%d')
+                # Validate reasonable date range (1900-2100)
+                if parsed_date.year < 1900 or parsed_date.year > 2100:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Field '{field_name}' date must be between 1900 and 2100 (got {parsed_date.year})"
+                    )
             except ValueError:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Field '{field_name}' must be in YYYY-MM-DD format"
+                    detail=f"Field '{field_name}' must be in YYYY-MM-DD format (got '{field_value}'). Example: 2025-01-15"
                 )
 
         elif column.type == 'select':
@@ -2015,7 +2095,7 @@ def validate_record_data(data: Dict[str, Any], schema: DatabaseSchema) -> None:
             if field_value not in column.options:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Field '{field_name}' must be one of: {', '.join(column.options)}"
+                    detail=f"Field '{field_name}' must be one of: {', '.join(column.options)} (got '{field_value}')"
                 )
 
 # ============================================
@@ -2689,15 +2769,25 @@ async def list_records(
     database_id: int,
     limit: int = 100,
     offset: int = 0,
+    search: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = 'asc',
+    filter_field: Optional[str] = None,
+    filter_value: Optional[str] = None,
     token_data: dict = Depends(get_current_user_from_token)
 ):
     """
-    Получить список записей базы данных
+    Получить список записей базы данных с поиском и фильтрацией
 
     Args:
         database_id: ID базы данных
         limit: Количество записей (max 100)
         offset: Смещение для пагинации
+        search: Поисковый запрос (ищет по всем текстовым полям)
+        sort_by: Название поля для сортировки
+        sort_order: Порядок сортировки (asc/desc)
+        filter_field: Поле для фильтрации
+        filter_value: Значение для фильтрации
         token_data: Данные токена
 
     Returns:
@@ -2715,20 +2805,79 @@ async def list_records(
         if not project:
             raise HTTPException(status_code=404, detail="Database not found")
 
+        # Parse schema for validation
+        schema_data = json.loads(database['schema_json'])
+        schema = DatabaseSchema(**schema_data)
+
         # Enforce limit cap
         if limit > 100:
             limit = 100
 
-        logger.info(f"Fetching records from database {database_id}")
-        records = db.get_records(database_id, limit=limit, offset=offset)
+        logger.info(f"Fetching records from database {database_id} with search='{search}', filter={filter_field}={filter_value}")
+
+        # Get all records (we'll filter in memory for now)
+        # TODO: Move filtering to database layer for better performance
+        all_records = db.get_records(database_id, limit=1000, offset=0)
 
         result = []
-        for record in records:
+        for record in all_records:
             # Parse data
             record['data'] = json.loads(record['data_json'])
+
+            # Apply search filter
+            if search:
+                search_lower = search.lower()
+                found = False
+                for col in schema.columns:
+                    if col.type == 'text' and col.name in record['data']:
+                        field_value = str(record['data'][col.name])
+                        if search_lower in field_value.lower():
+                            found = True
+                            break
+                if not found:
+                    continue
+
+            # Apply field filter
+            if filter_field and filter_value:
+                if filter_field not in record['data']:
+                    continue
+                record_value = str(record['data'][filter_field])
+                # For exact match on select/boolean, partial match on text
+                col = next((c for c in schema.columns if c.name == filter_field), None)
+                if col:
+                    if col.type in ['select', 'boolean', 'date']:
+                        if record_value != filter_value:
+                            continue
+                    elif col.type == 'number':
+                        try:
+                            if float(record_value) != float(filter_value):
+                                continue
+                        except ValueError:
+                            continue
+                    else:  # text
+                        if filter_value.lower() not in record_value.lower():
+                            continue
+
             result.append(RecordResponse(**record))
 
-        logger.info(f"Found {len(result)} records")
+        # Apply sorting
+        if sort_by:
+            col = next((c for c in schema.columns if c.name == sort_by), None)
+            if col:
+                def get_sort_key(r):
+                    value = r.data.get(sort_by)
+                    if value is None:
+                        return '' if col.type == 'text' else 0
+                    if col.type == 'number':
+                        return float(value) if isinstance(value, (int, float)) else 0
+                    return str(value)
+
+                result.sort(key=get_sort_key, reverse=(sort_order == 'desc'))
+
+        # Apply pagination
+        result = result[offset:offset + limit]
+
+        logger.info(f"Found {len(result)} records after filtering")
         return result
     except HTTPException:
         raise
@@ -2905,6 +3054,175 @@ async def delete_record(
         raise
     except Exception as e:
         logger.error(f"Error deleting record: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# CSV Import/Export Endpoints
+# ============================================
+
+@app.get("/api/databases/{database_id}/export/csv")
+async def export_records_csv(
+    database_id: int,
+    token_data: dict = Depends(get_current_user_from_token)
+):
+    """
+    Экспортировать записи базы данных в CSV
+
+    Args:
+        database_id: ID базы данных
+        token_data: Данные токена
+
+    Returns:
+        CSV file with records
+    """
+    try:
+        db = get_db()
+
+        # Get database and verify access
+        database = db.get_database(database_id)
+        if not database:
+            raise HTTPException(status_code=404, detail="Database not found")
+
+        project = db.get_project(database['project_id'], token_data['user_id'])
+        if not project:
+            raise HTTPException(status_code=404, detail="Database not found")
+
+        # Parse schema
+        schema_data = json.loads(database['schema_json'])
+        schema = DatabaseSchema(**schema_data)
+
+        # Get all records
+        records = db.get_records(database_id, limit=10000, offset=0)
+
+        # Create CSV in memory
+        output = io.StringIO()
+
+        # Column names from schema
+        fieldnames = [col.name for col in schema.columns]
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+
+        # Write header
+        writer.writeheader()
+
+        # Write records
+        for record in records:
+            data = json.loads(record['data_json'])
+            # Only include fields that are in schema
+            row = {field: data.get(field, '') for field in fieldnames}
+            writer.writerow(row)
+
+        # Get CSV content
+        csv_content = output.getvalue()
+        output.close()
+
+        logger.info(f"Exported {len(records)} records from database {database_id}")
+
+        # Return as downloadable file
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=database_{database_id}_{database['name']}.csv"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting CSV: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CSVImportRequest(BaseModel):
+    """Request model for CSV import"""
+    csv_content: str = Field(..., description="CSV content as string")
+    skip_header: bool = Field(default=True, description="Skip first row as header")
+    overwrite: bool = Field(default=False, description="Overwrite existing records")
+
+
+@app.post("/api/databases/{database_id}/import/csv")
+async def import_records_csv(
+    database_id: int,
+    request: CSVImportRequest,
+    token_data: dict = Depends(get_current_user_from_token)
+):
+    """
+    Импортировать записи из CSV в базу данных
+
+    Args:
+        database_id: ID базы данных
+        request: CSV content and options
+        token_data: Данные токена
+
+    Returns:
+        dict: Import statistics
+    """
+    try:
+        db = get_db()
+
+        # Get database and verify access
+        database = db.get_database(database_id)
+        if not database:
+            raise HTTPException(status_code=404, detail="Database not found")
+
+        project = db.get_project(database['project_id'], token_data['user_id'])
+        if not project:
+            raise HTTPException(status_code=404, detail="Database not found")
+
+        # Parse schema
+        schema_data = json.loads(database['schema_json'])
+        schema = DatabaseSchema(**schema_data)
+
+        # Parse CSV
+        csv_file = io.StringIO(request.csv_content)
+        reader = csv.DictReader(csv_file) if request.skip_header else csv.reader(csv_file)
+
+        imported_count = 0
+        error_count = 0
+        errors = []
+
+        # Clear existing records if overwrite
+        if request.overwrite:
+            existing_records = db.get_records(database_id, limit=10000, offset=0)
+            for record in existing_records:
+                db.delete_record(record['id'])
+            logger.info(f"Deleted {len(existing_records)} existing records")
+
+        # Process each row
+        for idx, row in enumerate(reader, start=1):
+            try:
+                if isinstance(row, list):
+                    # If not using DictReader, map to column names
+                    data = {schema.columns[i].name: row[i] for i in range(min(len(row), len(schema.columns)))}
+                else:
+                    # DictReader returns dict
+                    data = dict(row)
+
+                # Validate and create record
+                validate_record_data(data, schema)
+                data_json = json.dumps(data)
+                db.create_record(database_id, data_json)
+                imported_count += 1
+
+            except Exception as e:
+                error_count += 1
+                errors.append(f"Row {idx}: {str(e)}")
+                if error_count > 10:  # Limit error collection
+                    errors.append("... (more errors truncated)")
+                    break
+
+        logger.info(f"CSV import complete: {imported_count} imported, {error_count} errors")
+
+        return {
+            "success": True,
+            "imported": imported_count,
+            "errors": error_count,
+            "error_details": errors[:10]  # Return first 10 errors
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error importing CSV: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3388,6 +3706,248 @@ async def list_executions(
 
 
 # ============================================
+# Webhook Trigger Endpoints
+# ============================================
+
+@app.post("/api/webhooks/{workflow_id}/{token}")
+async def webhook_trigger(
+    workflow_id: int,
+    token: str,
+    request: Request
+):
+    """
+    Public webhook endpoint for triggering workflows
+
+    Args:
+        workflow_id: ID of workflow to trigger
+        token: Secret token for authentication (generated per workflow)
+        request: FastAPI request object (to access body/headers)
+
+    Returns:
+        Execution result
+
+    Example webhook URLs:
+        POST https://yourapi.com/api/webhooks/123/abc123def456
+        Body: {"event": "payment_completed", "amount": 100}
+    """
+    try:
+        db = get_db()
+
+        # Verify workflow exists and is enabled
+        with sqlite3.connect(db.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM workflows
+                WHERE id = ? AND trigger_type = 'webhook' AND enabled = 1
+            """, (workflow_id,))
+
+            workflow_row = cursor.fetchone()
+
+        if not workflow_row:
+            raise HTTPException(status_code=404, detail="Webhook workflow not found or disabled")
+
+        # Verify webhook token
+        trigger_config = json.loads(workflow_row['trigger_config']) if workflow_row['trigger_config'] else {}
+        expected_token = trigger_config.get('webhook_token', '')
+
+        if not expected_token or expected_token != token:
+            logger.warning(f"Invalid webhook token for workflow {workflow_id}")
+            raise HTTPException(status_code=401, detail="Invalid webhook token")
+
+        # Parse webhook payload
+        try:
+            body = await request.json()
+        except:
+            body = {}
+
+        # Get headers
+        headers = dict(request.headers)
+
+        # Build context with webhook data
+        context = {
+            'trigger': 'webhook',
+            'webhook': {
+                'workflow_id': workflow_id,
+                'body': body,
+                'headers': headers,
+                'method': request.method,
+                'url': str(request.url)
+            },
+            'triggered_at': datetime.now().isoformat()
+        }
+
+        logger.info(f"Webhook received for workflow {workflow_id}")
+
+        # Execute workflow
+        from agents.workflow_engine import WorkflowEngine
+        engine = WorkflowEngine()
+        result = engine.execute(workflow_id, context)
+
+        return {
+            "success": result['success'],
+            "workflow_id": workflow_id,
+            "execution_id": result.get('execution_id'),
+            "message": "Webhook processed successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/workflows/{workflow_id}/webhook-url")
+async def get_webhook_url(
+    workflow_id: int,
+    token_data: dict = Depends(get_current_user_from_token)
+):
+    """
+    Get webhook URL for a workflow
+
+    Args:
+        workflow_id: ID of workflow
+        token_data: User authentication
+
+    Returns:
+        Webhook URL and configuration
+    """
+    try:
+        db = get_db()
+        user_id = token_data['user_id']
+
+        # Verify workflow exists and belongs to user
+        with sqlite3.connect(db.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM workflows
+                WHERE id = ? AND user_id = ?
+            """, (workflow_id, user_id))
+
+            workflow_row = cursor.fetchone()
+
+        if not workflow_row:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        # Get or generate webhook token
+        trigger_config = json.loads(workflow_row['trigger_config']) if workflow_row['trigger_config'] else {}
+
+        if 'webhook_token' not in trigger_config:
+            # Generate new token
+            import secrets
+            webhook_token = secrets.token_urlsafe(32)
+
+            trigger_config['webhook_token'] = webhook_token
+
+            # Update workflow
+            with sqlite3.connect(db.db_path) as conn:
+                conn.execute("""
+                    UPDATE workflows
+                    SET trigger_config = ?
+                    WHERE id = ?
+                """, (json.dumps(trigger_config), workflow_id))
+                conn.commit()
+        else:
+            webhook_token = trigger_config['webhook_token']
+
+        # Build webhook URL (use environment variable or default)
+        base_url = os.getenv('API_BASE_URL', 'http://localhost:8000')
+        webhook_url = f"{base_url}/api/webhooks/{workflow_id}/{webhook_token}"
+
+        return {
+            "workflow_id": workflow_id,
+            "webhook_url": webhook_url,
+            "webhook_token": webhook_token,
+            "instructions": "POST to this URL with JSON body to trigger the workflow"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting webhook URL: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflows/{workflow_id}/register-schedule")
+async def register_schedule(
+    workflow_id: int,
+    token_data: dict = Depends(get_current_user_from_token)
+):
+    """
+    Register a schedule workflow with the scheduler
+
+    Args:
+        workflow_id: ID of workflow to register
+        token_data: User authentication
+
+    Returns:
+        Registration status
+    """
+    try:
+        db = get_db()
+        user_id = token_data['user_id']
+
+        # Verify workflow exists, belongs to user, and is schedule type
+        with sqlite3.connect(db.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM workflows
+                WHERE id = ? AND user_id = ? AND trigger_type = 'schedule'
+            """, (workflow_id, user_id))
+
+            workflow_row = cursor.fetchone()
+
+        if not workflow_row:
+            raise HTTPException(status_code=404, detail="Schedule workflow not found")
+
+        # Register with scheduler
+        from workflow_scheduler import get_scheduler
+        scheduler = get_scheduler()
+        scheduler.register_workflow(dict(workflow_row))
+
+        logger.info(f"Registered schedule workflow {workflow_id}")
+
+        return {
+            "success": True,
+            "workflow_id": workflow_id,
+            "message": "Workflow registered with scheduler"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error registering schedule: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/workflows/scheduled-jobs")
+async def list_scheduled_jobs(token_data: dict = Depends(get_current_user_from_token)):
+    """
+    Get list of all scheduled jobs
+
+    Args:
+        token_data: User authentication
+
+    Returns:
+        List of scheduled jobs
+    """
+    try:
+        from workflow_scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        jobs = scheduler.get_scheduled_jobs()
+
+        return {
+            "jobs": jobs,
+            "count": len(jobs)
+        }
+
+    except Exception as e:
+        logger.error(f"Error listing scheduled jobs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
 # INTEGRATIONS ENDPOINTS
 # ============================================
 
@@ -3477,12 +4037,19 @@ async def connect_integration(
             db = get_db()
             # Save token (expires in 1 year)
             expires_at = (datetime.now() + timedelta(days=365)).isoformat()
+
+            # Prepare metadata with chat_id if provided
+            metadata = {}
+            if request.chat_id:
+                metadata['chat_id'] = request.chat_id
+
             db.save_integration_token(
                 user_id=user_id,
                 integration_type='telegram',
                 access_token=request.bot_token,
                 refresh_token='',
-                expires_at=expires_at
+                expires_at=expires_at,
+                metadata=metadata if metadata else None
             )
 
             logger.info(f"Connected Telegram integration for user {user_id}")
@@ -3490,35 +4057,43 @@ async def connect_integration(
 
         # Handle OAuth integrations (Gmail, Google Drive)
         else:
-            # Generate OAuth URL
-            # Note: In production, this would use google-auth-oauthlib.flow
-            # For MVP, we return a placeholder
+            # Get OAuth configuration from environment
+            client_id = os.getenv('GOOGLE_CLIENT_ID')
+            redirect_uri = os.getenv('GOOGLE_REDIRECT_URI')
 
-            # OAuth configuration
-            client_id = os.getenv('GOOGLE_CLIENT_ID', 'your-client-id.apps.googleusercontent.com')
-            redirect_uri = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:8000/api/integrations/callback')
+            if not client_id or not redirect_uri:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Google OAuth not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_REDIRECT_URI environment variables."
+                )
 
             # Scopes based on integration type
             if integration_type == 'gmail':
-                scope = 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly'
+                scopes = [
+                    'https://www.googleapis.com/auth/gmail.send',
+                    'https://www.googleapis.com/auth/gmail.readonly'
+                ]
+                scope_param = 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly'
             else:  # google_drive
-                scope = 'https://www.googleapis.com/auth/drive.file'
+                scopes = ['https://www.googleapis.com/auth/drive.file']
+                scope_param = 'https://www.googleapis.com/auth/drive.file'
 
-            # Generate state for CSRF protection (in production, store in session/database)
-            import secrets
-            state = secrets.token_urlsafe(32)
+            # Generate state with user_id and integration_type
+            # Format: "user_id:integration_type"
+            state = f"{user_id}:{integration_type}"
 
             # Build OAuth URL
-            oauth_url = (
-                f"https://accounts.google.com/o/oauth2/v2/auth?"
-                f"client_id={client_id}&"
-                f"redirect_uri={redirect_uri}&"
-                f"response_type=code&"
-                f"scope={scope}&"
-                f"state={state}&"
-                f"access_type=offline&"
-                f"prompt=consent"
-            )
+            from urllib.parse import urlencode
+            params = {
+                'client_id': client_id,
+                'redirect_uri': redirect_uri,
+                'response_type': 'code',
+                'scope': scope_param,
+                'state': state,
+                'access_type': 'offline',
+                'prompt': 'consent'  # Force consent to get refresh token
+            }
+            oauth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
 
             logger.info(f"Generated OAuth URL for {integration_type} for user {user_id}")
             return {
@@ -3542,24 +4117,108 @@ async def oauth_callback(code: str, state: str):
     Exchanges authorization code for access/refresh tokens
     and saves them to the database
     """
-    try:
-        # Note: In production, this would:
-        # 1. Verify state parameter
-        # 2. Exchange code for tokens
-        # 3. Save tokens to database
-        # 4. Redirect to frontend with success message
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import Flow
+    import json as json_lib
 
-        # For MVP, return placeholder
+    try:
         logger.info(f"OAuth callback received: code={code[:20]}..., state={state[:20]}...")
 
-        return {
-            "message": "OAuth callback received. In production, this would exchange code for tokens.",
-            "note": "For MVP, please use the /api/integrations/connect endpoint directly with credentials."
+        # Get OAuth config from environment
+        client_id = os.getenv('GOOGLE_CLIENT_ID')
+        client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
+        redirect_uri = os.getenv('GOOGLE_REDIRECT_URI')
+
+        if not all([client_id, client_secret, redirect_uri]):
+            logger.error("Missing Google OAuth configuration")
+            return RedirectResponse(
+                url="/integrations?error=oauth_config_missing",
+                status_code=302
+            )
+
+        # Parse state to get user_id and integration_type
+        # Format: "user_id:integration_type"
+        try:
+            user_id_str, integration_type = state.split(':')
+            user_id = int(user_id_str)
+        except (ValueError, AttributeError):
+            logger.error(f"Invalid state parameter: {state}")
+            return RedirectResponse(
+                url="/integrations?error=invalid_state",
+                status_code=302
+            )
+
+        # Create OAuth flow
+        client_config = {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [redirect_uri]
+            }
         }
+
+        # Determine scopes based on integration type
+        if integration_type == 'gmail':
+            scopes = [
+                'https://www.googleapis.com/auth/gmail.send',
+                'https://www.googleapis.com/auth/gmail.readonly'
+            ]
+        elif integration_type == 'google_drive':
+            scopes = ['https://www.googleapis.com/auth/drive.file']
+        else:
+            logger.error(f"Unknown integration type: {integration_type}")
+            return RedirectResponse(
+                url="/integrations?error=unknown_integration",
+                status_code=302
+            )
+
+        flow = Flow.from_client_config(
+            client_config,
+            scopes=scopes,
+            redirect_uri=redirect_uri
+        )
+
+        # Exchange authorization code for tokens
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+
+        # Save tokens to database
+        db = get_db()
+
+        # Calculate expiry
+        from datetime import datetime, timedelta
+        if credentials.expiry:
+            expires_at = credentials.expiry.isoformat()
+        else:
+            # Default to 1 hour
+            expires_at = (datetime.now() + timedelta(hours=1)).isoformat()
+
+        db.save_integration_token(
+            user_id=user_id,
+            integration_type=integration_type,
+            access_token=credentials.token,
+            refresh_token=credentials.refresh_token or '',
+            expires_at=expires_at
+        )
+
+        logger.info(f"Successfully saved {integration_type} tokens for user {user_id}")
+
+        # Redirect to frontend with success
+        return RedirectResponse(
+            url=f"/integrations?success={integration_type}",
+            status_code=302
+        )
 
     except Exception as e:
         logger.error(f"Error in OAuth callback: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        return RedirectResponse(
+            url=f"/integrations?error=oauth_failed",
+            status_code=302
+        )
 
 
 @app.post("/api/integrations/disconnect")

@@ -19,6 +19,7 @@ interface Integration {
 interface TelegramConnectData {
   integration_type: string;
   bot_token: string;
+  chat_id?: string;
 }
 
 export default function IntegrationsPage() {
@@ -29,6 +30,7 @@ export default function IntegrationsPage() {
   // Modal states
   const [telegramModalOpen, setTelegramModalOpen] = useState(false);
   const [telegramBotToken, setTelegramBotToken] = useState('');
+  const [telegramChatId, setTelegramChatId] = useState('');
   const [telegramConnecting, setTelegramConnecting] = useState(false);
 
   const [disconnectModalOpen, setDisconnectModalOpen] = useState(false);
@@ -88,6 +90,13 @@ export default function IntegrationsPage() {
   // Handle OAuth callback via postMessage
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      // Security: Verify origin to prevent XSS attacks
+      const allowedOrigin = window.location.origin;
+      if (event.origin !== allowedOrigin) {
+        console.warn(`Rejected postMessage from untrusted origin: ${event.origin}`);
+        return;
+      }
+
       if (event.data.type === 'oauth-success') {
         showToast('Integration connected successfully', 'success');
         fetchIntegrations();
@@ -228,6 +237,7 @@ export default function IntegrationsPage() {
         body: JSON.stringify({
           integration_type: 'telegram',
           bot_token: telegramBotToken,
+          chat_id: telegramChatId || undefined,
         } as TelegramConnectData),
       });
 
@@ -239,6 +249,7 @@ export default function IntegrationsPage() {
       showToast('Telegram bot connected successfully', 'success');
       setTelegramModalOpen(false);
       setTelegramBotToken('');
+      setTelegramChatId('');
       fetchIntegrations();
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to connect', 'error');
@@ -475,21 +486,42 @@ export default function IntegrationsPage() {
                 <li>Send the command /newbot (or use existing bot with /token)</li>
                 <li>Follow the instructions to create a bot</li>
                 <li>Copy the bot token and paste it below</li>
+                <li>Get your Chat ID by messaging @userinfobot</li>
               </ol>
 
-              <label className="block text-sm font-medium mb-2">Bot Token</label>
-              <input
-                type="text"
-                value={telegramBotToken}
-                onChange={(e) => setTelegramBotToken(e.target.value)}
-                placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !telegramConnecting) {
-                    handleTelegramConnect();
-                  }
-                }}
-              />
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Bot Token *</label>
+                  <input
+                    type="text"
+                    value={telegramBotToken}
+                    onChange={(e) => setTelegramBotToken(e.target.value)}
+                    placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Chat ID <span className="text-gray-500">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={telegramChatId}
+                    onChange={(e) => setTelegramChatId(e.target.value)}
+                    placeholder="123456789 or @channel_name"
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !telegramConnecting) {
+                        handleTelegramConnect();
+                      }
+                    }}
+                  />
+                  <p className="text-gray-500 text-xs mt-1">
+                    Your personal Chat ID or a channel/group ID where the bot will send messages
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-3">

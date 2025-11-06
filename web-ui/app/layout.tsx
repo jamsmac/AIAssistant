@@ -4,6 +4,7 @@ import "./globals.css";
 import Navigation from "@/components/Navigation";
 import { ToastProvider } from "@/components/ui/Toast";
 import { PageErrorBoundary } from "@/components/ErrorBoundary";
+import { ThemeProvider } from "@/components/ThemeProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,20 +27,22 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-950 text-white`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white dark:bg-gray-950 text-gray-900 dark:text-white transition-colors duration-200`}
       >
-        <PageErrorBoundary>
-          <ToastProvider>
-            <Navigation />
-            <main className="md:pl-60 pt-16">
-              <div className="min-h-screen">
-                {children}
-              </div>
-            </main>
-          </ToastProvider>
-        </PageErrorBoundary>
+        <ThemeProvider>
+          <PageErrorBoundary>
+            <ToastProvider>
+              <Navigation />
+              <main className="md:pl-60 pt-16">
+                <div className="min-h-screen">
+                  {children}
+                </div>
+              </main>
+            </ToastProvider>
+          </PageErrorBoundary>
+        </ThemeProvider>
       </body>
     </html>
   );

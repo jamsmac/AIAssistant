@@ -210,6 +210,7 @@ class HistoryDatabase:
                     access_token TEXT NOT NULL,
                     refresh_token TEXT,
                     expires_at TEXT,
+                    metadata TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
@@ -1140,7 +1141,8 @@ class HistoryDatabase:
         integration_type: str,
         access_token: str,
         refresh_token: Optional[str] = None,
-        expires_at: Optional[str] = None
+        expires_at: Optional[str] = None,
+        metadata: Optional[Dict] = None
     ) -> int:
         """
         Сохранить или обновить токен интеграции
@@ -1151,10 +1153,15 @@ class HistoryDatabase:
             access_token: Access token
             refresh_token: Refresh token (опционально)
             expires_at: Время истечения токена
+            metadata: Дополнительные данные (например, chat_id для Telegram)
 
         Returns:
             ID записи
         """
+        import json
+
+        metadata_json = json.dumps(metadata) if metadata else None
+
         with sqlite3.connect(self.db_path) as conn:
             # Сначала проверяем, существует ли уже токен
             cursor = conn.execute("""
@@ -1167,18 +1174,18 @@ class HistoryDatabase:
                 # Обновляем существующий
                 cursor = conn.execute("""
                     UPDATE integration_tokens
-                    SET access_token = ?, refresh_token = ?, expires_at = ?
+                    SET access_token = ?, refresh_token = ?, expires_at = ?, metadata = ?
                     WHERE user_id = ? AND integration_type = ?
-                """, (access_token, refresh_token, expires_at, user_id, integration_type))
+                """, (access_token, refresh_token, expires_at, metadata_json, user_id, integration_type))
                 conn.commit()
                 return existing[0]
             else:
                 # Создаём новый
                 cursor = conn.execute("""
                     INSERT INTO integration_tokens
-                    (user_id, integration_type, access_token, refresh_token, expires_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (user_id, integration_type, access_token, refresh_token, expires_at))
+                    (user_id, integration_type, access_token, refresh_token, expires_at, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (user_id, integration_type, access_token, refresh_token, expires_at, metadata_json))
                 conn.commit()
                 return cursor.lastrowid
 

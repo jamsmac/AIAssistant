@@ -87,12 +87,13 @@ class WorkflowEngine:
             if context is None:
                 context = {}
 
-            # Add workflow info to context
+            # Add workflow info and user_id to context
             context['workflow'] = {
                 'id': workflow_id,
                 'name': workflow['name'],
                 'trigger_type': workflow['trigger_type']
             }
+            context['user_id'] = workflow['user_id']
 
             # Execute each action sequentially
             results = []
@@ -508,18 +509,57 @@ class WorkflowEngine:
 
     def _action_send_telegram(self, config: Dict) -> Dict:
         """Send Telegram message via MCP"""
+        import json
+        from database import HistoryDatabase
+
+        # Get chat_id from config or use default from integration metadata
         chat_id = config.get('chat_id')
         message = config.get('message')
+        user_id = config.get('user_id')  # Should be passed in workflow context
 
-        if not chat_id or not message:
-            return {"success": False, "error": "chat_id and message required"}
+        if not message:
+            return {"success": False, "error": "message required"}
 
-        self.logger.info(f"send_telegram: chat_id={chat_id}, message={message[:50]}...")
+        self.logger.info(f"send_telegram: message={message[:50]}...")
+
+        # Get Telegram integration token and metadata
+        try:
+            db = HistoryDatabase(self.db_path)
+            token_data = db.get_integration_token(user_id, 'telegram')
+
+            if not token_data:
+                return {
+                    "success": False,
+                    "action_type": "send_telegram",
+                    "error": "Telegram not connected. Please connect Telegram in Integration Hub."
+                }
+
+            bot_token = token_data['access_token']
+
+            # Use chat_id from config, or fall back to metadata
+            if not chat_id and token_data.get('metadata'):
+                metadata = json.loads(token_data['metadata'])
+                chat_id = metadata.get('chat_id')
+
+            if not chat_id:
+                return {
+                    "success": False,
+                    "action_type": "send_telegram",
+                    "error": "chat_id required (provide in action config or set in integration settings)"
+                }
+
+        except Exception as e:
+            self.logger.error(f"Failed to get Telegram integration: {e}")
+            return {
+                "success": False,
+                "action_type": "send_telegram",
+                "error": f"Failed to get Telegram integration: {str(e)}"
+            }
 
         # Initialize MCP client if needed
         if not self.mcp_client:
             try:
-                from agents.mcp_client import MCPClient
+                from mcp_client import MCPClient
                 self.mcp_client = MCPClient()
             except Exception as e:
                 self.logger.warning(f"MCP client not available: {e}")
@@ -533,19 +573,24 @@ class WorkflowEngine:
                     }
                 }
 
-        # Try to send via MCP (requires connection)
+        # Connect to Telegram and send message
         try:
-            # Note: In production, Telegram bot token should be loaded from user's integration settings
-            # For MVP, we simulate since connection requires bot token
-            self.logger.info("Telegram integration requires bot token - simulating send")
+            # Connect with bot token
+            self.mcp_client.connect(user_id=user_id, services=['telegram'])
+
+            # Send message
+            result = self.mcp_client.telegram_send(
+                chat_id=chat_id,
+                text=message,
+                parse_mode=config.get('parse_mode', 'HTML')
+            )
+
             return {
                 "success": True,
                 "action_type": "send_telegram",
-                "result": {
-                    "chat_id": chat_id,
-                    "status": "sent (simulated - bot token required)"
-                }
+                "result": result
             }
+
         except Exception as e:
             self.logger.error(f"Telegram send error: {e}")
             return {
