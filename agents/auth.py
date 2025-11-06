@@ -149,6 +149,57 @@ def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def verify_reset_token(token: str) -> Optional[str]:
+    """
+    Verify a password reset token.
+    
+    Args:
+        token: Reset token string.
+        
+    Returns:
+        Email address if token is valid, None otherwise.
+    """
+    if not token:
+        return None
+    
+    try:
+        payload = jwt.decode(token, _get_secret_key(), algorithms=[ALGORITHM])
+        # Reset tokens should have email and reset action
+        if payload.get("action") != "password_reset":
+            return None
+        return payload.get("email")
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+
+def generate_reset_token(email: str, expires_hours: int = 1) -> str:
+    """
+    Generate a password reset token for a user.
+    
+    Args:
+        email: User email address.
+        expires_hours: Token expiration time in hours (default 1 hour).
+        
+    Returns:
+        Encoded reset token string.
+    """
+    if expires_hours <= 0:
+        raise ValueError("expires_hours must be positive")
+    
+    now = datetime.now(timezone.utc)
+    payload: Dict[str, Any] = {
+        "email": email,
+        "action": "password_reset",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=expires_hours)).timestamp()),
+    }
+    
+    token = jwt.encode(payload, _get_secret_key(), algorithm=ALGORITHM)
+    return token if isinstance(token, str) else token.decode("utf-8")
+
+
 def get_current_user(authorization: str = None, cookies: Dict[str, str] = None):
     """
     Extract and verify user from JWT token (from header or cookie).
