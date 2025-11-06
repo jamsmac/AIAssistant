@@ -252,9 +252,11 @@ export class APIClient {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      // Clear local state
+      // Clear all local state
       if (typeof window !== 'undefined') {
         localStorage.removeItem('token');
+        localStorage.removeItem('currentSessionId');  // Clear current chat session
+        localStorage.removeItem('user');  // Clear cached user data
       }
       this.csrfToken = null;
 

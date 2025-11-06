@@ -749,6 +749,110 @@ class AIRouter:
             'ollama': True  # Всегда доступен локально
         }
 
+    # ============================================
+    # Async Methods (for FastAPI compatibility)
+    # ============================================
+
+    async def route_request(
+        self,
+        prompt: str,
+        task_type: str = 'general',
+        complexity: str = 'medium',
+        budget: str = 'medium',
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        session_id: str = None,
+        image_data: Dict = None
+    ) -> Dict[str, Any]:
+        """
+        Async wrapper for route() method
+
+        Converts string complexity to int and calls sync route() in executor
+        to avoid blocking the event loop.
+
+        Args:
+            prompt: User prompt
+            task_type: Type of task ('general', 'code', etc.)
+            complexity: 'low', 'medium', or 'high'
+            budget: 'free', 'cheap', 'medium', or 'expensive'
+            temperature: Model temperature (0.0-2.0)
+            max_tokens: Maximum tokens to generate
+            session_id: Optional session ID for context
+            image_data: Optional image data for vision models
+
+        Returns:
+            Dict with response, model_used, tokens_used, cost
+        """
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Convert complexity string to int
+        complexity_map = {'low': 3, 'medium': 5, 'high': 8}
+        complexity_int = complexity_map.get(complexity, 5)
+
+        # Run synchronous route() in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            result = await loop.run_in_executor(
+                executor,
+                lambda: self.route(
+                    prompt=prompt,
+                    task_type=task_type,
+                    complexity=complexity_int,
+                    budget=budget,
+                    session_id=session_id
+                )
+            )
+
+        # Map result keys to match expected format
+        return {
+            'response': result.get('response', ''),
+            'model_used': result.get('model', 'unknown'),
+            'tokens_used': result.get('tokens', 0),
+            'cost': result.get('cost', 0.0),
+            'cached': result.get('cached', False)
+        }
+
+    async def route_request_stream(
+        self,
+        prompt: str,
+        task_type: str = 'general',
+        complexity: str = 'medium',
+        budget: str = 'medium',
+        temperature: float = 0.7,
+        max_tokens: int = 2000
+    ):
+        """
+        Async generator for streaming responses
+
+        Note: Currently returns full response in one chunk.
+        TODO: Implement true streaming with model SDKs.
+
+        Yields:
+            str: Chunks of the response
+        """
+        # For now, get full response and yield it
+        # In future, integrate with streaming APIs from OpenAI/Anthropic
+        result = await self.route_request(
+            prompt=prompt,
+            task_type=task_type,
+            complexity=complexity,
+            budget=budget,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        # Simulate streaming by yielding response in chunks
+        response = result['response']
+        chunk_size = 50  # characters per chunk
+
+        for i in range(0, len(response), chunk_size):
+            chunk = response[i:i+chunk_size]
+            yield chunk
+            # Small delay to simulate streaming
+            import asyncio
+            await asyncio.sleep(0.01)
+
 # Тестирование при прямом запуске
 if __name__ == "__main__":
     print("🤖 AI Router Test\n")

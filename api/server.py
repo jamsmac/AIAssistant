@@ -214,6 +214,18 @@ app.add_middleware(MonitoringMiddleware)
 router = AIRouter()
 
 # ============================================
+# Include Routers
+# ============================================
+
+# Import and include chat router
+try:
+    from api.routers import chat_router
+    app.include_router(chat_router.router)
+    logger.info("Chat router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load chat router: {e}")
+
+# ============================================
 # Startup and Shutdown Events
 # ============================================
 

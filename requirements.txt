@@ -35,6 +35,7 @@ python-dotenv==1.0.1
 rich==13.9.4
 click==8.1.7
 pyyaml==6.0.2
+tiktoken==0.7.0  # Token counting for OpenAI models
 
 # Auth
 bcrypt==4.2.0
@@ -50,6 +51,12 @@ psutil==5.9.8
 # Web Scraping (for rankings collector)
 beautifulsoup4==4.12.3
 requests==2.31.0
+
+# File Processing
+PyMuPDF==1.24.0  # PDF processing
+Pillow==10.4.0  # Image processing
+python-magic==0.4.27  # File type detection
+pytesseract==0.3.10  # OCR for images
 
 # Testing
 pytest==8.3.3

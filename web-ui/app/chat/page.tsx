@@ -604,6 +604,20 @@ export default function ChatPage() {
             />
           </Suspense>
 
+          {/* Loading Indicator - shown when AI is thinking */}
+          {loading && !isStreaming && (
+            <div className="flex items-center justify-center gap-3 py-4 animate-fadeIn">
+              <div className="flex items-center gap-2 px-4 py-2 bg-gray-700/50 rounded-lg border border-gray-600">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                </div>
+                <span className="text-sm text-gray-300">AI is thinking...</span>
+              </div>
+            </div>
+          )}
+
           {/* Input Area */}
           <Suspense fallback={<LoadingSpinner />}>
             <ChatInput

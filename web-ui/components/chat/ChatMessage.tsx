@@ -1,7 +1,7 @@
 'use client';
 
 import React, { memo } from 'react';
-import { FileText, ImageIcon, File } from 'lucide-react';
+import { FileText, ImageIcon, File, AlertTriangle, XCircle } from 'lucide-react';
 
 interface FileAttachment {
   name: string;
@@ -11,13 +11,15 @@ interface FileAttachment {
 }
 
 interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'error';
   content: string;
   model?: string;
   cost?: number;
   tokens?: number;
   cached?: boolean;
   file?: FileAttachment;
+  error?: boolean;
+  errorType?: 'timeout' | 'rate_limit' | 'validation' | 'server' | 'network';
 }
 
 interface ChatMessageProps {
@@ -56,19 +58,67 @@ const ChatMessage = memo(function ChatMessage({ message, isStreaming = false }: 
     );
   };
 
+  // Determine styling based on message type
+  const isError = message.error || message.role === 'error';
+  const isUser = message.role === 'user';
+
+  const getErrorIcon = () => {
+    switch (message.errorType) {
+      case 'timeout':
+        return <AlertTriangle className="w-5 h-5 text-yellow-400" />;
+      case 'rate_limit':
+        return <AlertTriangle className="w-5 h-5 text-orange-400" />;
+      case 'network':
+        return <XCircle className="w-5 h-5 text-red-400" />;
+      default:
+        return <XCircle className="w-5 h-5 text-red-400" />;
+    }
+  };
+
+  const getErrorStyles = () => {
+    if (!isError) return '';
+    switch (message.errorType) {
+      case 'timeout':
+      case 'rate_limit':
+        return 'bg-yellow-900/20 border-yellow-600 text-yellow-100';
+      case 'validation':
+        return 'bg-orange-900/20 border-orange-600 text-orange-100';
+      case 'network':
+        return 'bg-red-900/20 border-red-600 text-red-100';
+      default:
+        return 'bg-red-900/20 border-red-600 text-red-100';
+    }
+  };
+
   return (
     <div
       className={`flex ${
-        message.role === 'user' ? 'justify-end' : 'justify-start'
+        isUser ? 'justify-end' : 'justify-start'
       } mb-4 animate-fadeIn`}
     >
       <div
         className={`max-w-[70%] rounded-lg px-4 py-3 ${
-          message.role === 'user'
+          isError
+            ? `${getErrorStyles()} border`
+            : isUser
             ? 'bg-blue-600 text-white'
             : 'bg-gray-700 text-gray-100 border border-gray-600'
         }`}
       >
+        {/* Error icon for error messages */}
+        {isError && (
+          <div className="flex items-center gap-2 mb-2">
+            {getErrorIcon()}
+            <span className="font-semibold text-sm">
+              {message.errorType === 'timeout' && 'Request Timeout'}
+              {message.errorType === 'rate_limit' && 'Rate Limit Exceeded'}
+              {message.errorType === 'validation' && 'Validation Error'}
+              {message.errorType === 'network' && 'Network Error'}
+              {!message.errorType && 'Error'}
+            </span>
+          </div>
+        )}
+
         {message.file && renderFilePreview(message.file)}
 
         <div className="whitespace-pre-wrap break-words">
@@ -78,7 +128,14 @@ const ChatMessage = memo(function ChatMessage({ message, isStreaming = false }: 
           )}
         </div>
 
-        {message.role === 'assistant' && (message.model || message.cost !== undefined) && (
+        {/* Show retry hint for certain errors */}
+        {isError && (message.errorType === 'timeout' || message.errorType === 'rate_limit') && (
+          <div className="mt-2 text-xs opacity-75">
+            💡 Tip: Try again in a moment or simplify your request
+          </div>
+        )}
+
+        {message.role === 'assistant' && !isError && (message.model || message.cost !== undefined) && (
           <div className="flex items-center gap-4 mt-2 pt-2 border-t border-gray-600">
             {message.model && (
               <span className="text-xs text-gray-400">
