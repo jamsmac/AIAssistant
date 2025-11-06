@@ -226,3 +226,4 @@ curl -H "Origin: https://your-app.vercel.app" \
 **Статус:** ⚠️ Ожидается Vercel URL для финальной настройки CORS
 
 
+

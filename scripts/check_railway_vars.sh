@@ -96,3 +96,4 @@ echo "  railway variables set CORS_ORIGINS=\"https://your-app.vercel.app\""
 echo "  railway variables set FRONTEND_URL=\"https://your-app.vercel.app\""
 
 
+

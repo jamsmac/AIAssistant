@@ -121,3 +121,4 @@ curl https://aiassistant-production-7a4d.up.railway.app/api/health
 **Обновлено:** 2025-01-04
 
 
+

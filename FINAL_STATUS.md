@@ -177,3 +177,4 @@ railway variables set FRONTEND_URL="https://your-app.vercel.app"
 **Railway URL:** https://aiassistant-production-7a4d.up.railway.app
 
 
+
