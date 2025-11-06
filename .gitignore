@@ -24,3 +24,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 RAILWAY_VARIABLES.md.backup
+
+# Test coverage
+.coverage
+coverage.json
+coverage.xml
+htmlcov/
