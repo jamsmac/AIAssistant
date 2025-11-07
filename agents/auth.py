@@ -231,9 +231,29 @@ def get_current_user(authorization: str = None, cookies: Dict[str, str] = None):
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+    # Fetch user role from database
+    user_id = payload["sub"]
+    role = "user"  # Default role
+
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent / "data" / "history.db"
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT role FROM users WHERE id = ?", (user_id,))
+        result = cursor.fetchone()
+        if result and result[0]:
+            role = result[0]
+        conn.close()
+    except Exception as e:
+        # If role fetch fails, continue with default role
+        pass
+
     return {
         "id": payload["sub"],
-        "email": payload["email"]
+        "email": payload["email"],
+        "role": role
     }
 
 

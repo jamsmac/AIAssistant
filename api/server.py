@@ -227,6 +227,14 @@ try:
 except ImportError as e:
     logger.warning(f"Could not load chat router: {e}")
 
+# Import and include credit router
+try:
+    from api.routers import credit_router
+    app.include_router(credit_router.router)
+    logger.info("Credit router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load credit router: {e}")
+
 # ============================================
 # Startup and Shutdown Events
 # ============================================
