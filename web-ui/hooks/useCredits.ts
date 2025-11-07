@@ -168,14 +168,21 @@ export function usePurchaseCredits() {
         }),
       });
 
+      // If Stripe checkout URL is provided, redirect to it
+      if (data.payment_url) {
+        window.location.href = data.payment_url;
+        // Keep loading state active during redirect
+        return data;
+      }
+
       return data;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Purchase failed';
       setError(errorMessage);
-      throw err;
-    } finally {
       setLoading(false);
+      throw err;
     }
+    // Note: Don't set loading to false if we're redirecting
   };
 
   return { purchase, loading, error };

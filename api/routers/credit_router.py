@@ -3,7 +3,8 @@ Credit System API Router
 Handles credit balance, purchases, and transactions
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import logging
@@ -11,12 +12,14 @@ import logging
 from api.routers.auth_router import get_current_user
 from agents.credit_manager import CreditManager
 from agents.model_selector import ModelSelector
+from agents.payment_service import get_payment_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/credits", tags=["credits"])
 credit_manager = CreditManager()
 model_selector = ModelSelector()
+payment_service = get_payment_service()
 
 
 # ============= REQUEST/RESPONSE MODELS =============
@@ -150,19 +153,15 @@ async def purchase_credits(
     """
     Purchase credits using a package
 
-    NOTE: This is a simplified implementation. In production, you would:
-    1. Create a payment intent with Stripe/PayPal
-    2. Redirect user to payment page
-    3. Handle webhook callback when payment succeeds
-    4. Then add credits to user account
-
-    For development/demo, this immediately grants credits.
+    This creates a Stripe Checkout session and redirects the user to Stripe's
+    hosted payment page. After successful payment, Stripe will send a webhook
+    to /api/credits/webhook, which will add credits to the user's account.
 
     Args:
         purchase: Purchase request with package_id and payment_method
 
     Returns:
-        Purchase confirmation with transaction details
+        Purchase response with checkout_url for redirect to Stripe
     """
     try:
         # Get package details
@@ -183,49 +182,86 @@ async def purchase_credits(
         # Calculate total credits (base + bonus)
         total_credits = package['credits'] + package['bonus_credits']
 
-        # TODO: In production, integrate with real payment provider
-        # For now, simulate successful payment
-        logger.info(
-            f"User {current_user['id']} purchasing package {purchase.package_id} "
-            f"for ${package['price_usd']} via {purchase.payment_method}"
-        )
+        # Create Stripe Checkout Session
+        if purchase.payment_method == 'stripe':
+            # Determine success/cancel URLs
+            # In production, these would be your frontend URLs
+            base_url = "http://localhost:3000"  # TODO: Get from config
+            success_url = f"{base_url}/credits/success"
+            cancel_url = f"{base_url}/credits"
 
-        # Add credits to user account
-        description = (
-            f"Purchased {package['name']} package "
-            f"({package['credits']} credits + {package['bonus_credits']} bonus)"
-        )
-
-        success = credit_manager.add_credits(
-            user_id=current_user['id'],
-            amount=total_credits,
-            description=description,
-            payment_id=None,  # Would be real payment ID from Stripe/PayPal
-            metadata={
-                'package_id': purchase.package_id,
-                'package_name': package['name'],
-                'payment_method': purchase.payment_method,
-                'price_usd': package['price_usd']
-            }
-        )
-
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to add credits to account"
+            result = payment_service.create_checkout_session(
+                package_id=purchase.package_id,
+                package_name=package['name'],
+                package_credits=total_credits,
+                package_price_usd=package['price_usd'],
+                user_id=current_user['id'],
+                user_email=current_user['email'],
+                success_url=success_url,
+                cancel_url=cancel_url
             )
 
-        # Get new balance
-        new_balance = credit_manager.get_balance(current_user['id'])
+            if not result['success']:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to create checkout session: {result.get('error')}"
+                )
 
-        return PurchaseResponse(
-            success=True,
-            message=f"Successfully purchased {total_credits} credits",
-            transaction_id=None,  # Would query last transaction ID
-            credits_added=total_credits,
-            new_balance=new_balance,
-            payment_url=None  # In production, would be Stripe checkout URL
-        )
+            logger.info(
+                f"Created Stripe checkout session {result['session_id']} for user {current_user['id']}"
+            )
+
+            return PurchaseResponse(
+                success=True,
+                message="Checkout session created. Redirect to payment page.",
+                transaction_id=None,  # Will be created by webhook
+                credits_added=None,  # Will be added by webhook
+                new_balance=None,  # Will be updated by webhook
+                payment_url=result['checkout_url']  # Redirect user here
+            )
+
+        else:
+            # Fallback for demo/testing - immediately grant credits
+            logger.warning(
+                f"Using demo mode for payment method '{purchase.payment_method}'. "
+                f"Credits granted immediately without payment."
+            )
+
+            description = (
+                f"Purchased {package['name']} package "
+                f"({package['credits']} credits + {package['bonus_credits']} bonus)"
+            )
+
+            success = credit_manager.add_credits(
+                user_id=current_user['id'],
+                amount=total_credits,
+                description=description,
+                payment_id=None,
+                metadata={
+                    'package_id': purchase.package_id,
+                    'package_name': package['name'],
+                    'payment_method': purchase.payment_method,
+                    'price_usd': package['price_usd'],
+                    'demo_mode': True
+                }
+            )
+
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to add credits to account"
+                )
+
+            new_balance = credit_manager.get_balance(current_user['id'])
+
+            return PurchaseResponse(
+                success=True,
+                message=f"Successfully purchased {total_credits} credits (demo mode)",
+                transaction_id=None,
+                credits_added=total_credits,
+                new_balance=new_balance,
+                payment_url=None
+            )
 
     except HTTPException:
         raise
@@ -499,4 +535,153 @@ async def estimate_cost(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to estimate cost: {str(e)}"
+        )
+
+
+@router.post("/webhook")
+async def stripe_webhook(
+    request: Request,
+    stripe_signature: Optional[str] = Header(None, alias="stripe-signature")
+):
+    """
+    Stripe webhook endpoint
+
+    This endpoint receives webhook events from Stripe when payments are completed,
+    failed, or refunded. It verifies the signature and processes the event.
+
+    The most important event is 'checkout.session.completed', which is triggered
+    when a user successfully completes a payment.
+
+    NOTE: This endpoint does NOT require authentication because it's called by Stripe.
+    Security is handled by webhook signature verification.
+
+    Returns:
+        Success/error response
+    """
+    try:
+        # Get raw request body
+        payload = await request.body()
+
+        if not stripe_signature:
+            logger.warning("Webhook received without stripe-signature header")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Missing stripe-signature header"}
+            )
+
+        # Verify webhook signature
+        event = payment_service.verify_webhook_signature(payload, stripe_signature)
+
+        if not event:
+            logger.error("Webhook signature verification failed")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid signature"}
+            )
+
+        # Handle the event
+        result = payment_service.handle_webhook_event(event)
+
+        # If this was a successful checkout, add credits to user account
+        if result.get('action') == 'checkout_completed' and result.get('data'):
+            data = result['data']
+            user_id = data.get('user_id')
+            credits = data.get('credits')
+            payment_intent = data.get('payment_intent')
+            amount_usd = data.get('amount_usd')
+
+            if user_id and credits:
+                # Add credits to user account
+                description = (
+                    f"Purchased {credits} credits via Stripe "
+                    f"(${amount_usd:.2f})"
+                )
+
+                success = credit_manager.add_credits(
+                    user_id=user_id,
+                    amount=credits,
+                    description=description,
+                    payment_id=payment_intent,
+                    metadata={
+                        'package_id': data.get('package_id'),
+                        'session_id': data.get('session_id'),
+                        'customer_email': data.get('customer_email'),
+                        'payment_provider': 'stripe',
+                        'amount_usd': amount_usd
+                    }
+                )
+
+                if success:
+                    logger.info(
+                        f"Successfully added {credits} credits to user {user_id} "
+                        f"from Stripe payment {payment_intent}"
+                    )
+                else:
+                    logger.error(
+                        f"Failed to add credits for user {user_id} "
+                        f"after successful Stripe payment {payment_intent}"
+                    )
+                    # TODO: Add to failed transactions table for manual review
+
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"success": True, "received": True}
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
+
+
+@router.get("/session/{session_id}")
+async def get_checkout_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get Stripe checkout session status
+
+    This endpoint allows the frontend to check if a payment was successful
+    after the user returns from Stripe's hosted checkout page.
+
+    Args:
+        session_id: Stripe checkout session ID
+
+    Returns:
+        Session details including payment status
+    """
+    try:
+        result = payment_service.retrieve_session(session_id)
+
+        if not result['success']:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to retrieve session: {result.get('error')}"
+            )
+
+        session = result['session']
+
+        # Only allow users to view their own sessions
+        session_user_id = session.get('metadata', {}).get('user_id')
+        if session_user_id and int(session_user_id) != current_user['id']:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view your own payment sessions"
+            )
+
+        return {
+            "success": True,
+            "session": session
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving checkout session: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve checkout session"
         )
