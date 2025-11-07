@@ -358,6 +358,86 @@ async def grant_bonus_credits(
         )
 
 
+@router.get("/admin/users", response_model=List[dict])
+async def get_users_with_credits(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get all users with credit information (superadmin only)"""
+    if current_user.get('role') != 'superadmin':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin only")
+
+    try:
+        import sqlite3
+        from agents.database import DB_PATH
+
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT u.id, u.email, u.role, u.created_at,
+                   COALESCE(uc.balance, 0) as balance,
+                   COALESCE(uc.total_purchased, 0) as total_purchased,
+                   COALESCE(uc.total_spent, 0) as total_spent
+            FROM users u
+            LEFT JOIN user_credits uc ON u.id = uc.user_id
+            ORDER BY u.id DESC LIMIT ? OFFSET ?
+        """, (limit, offset))
+
+        users = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return users
+    except Exception as e:
+        logger.error(f"Error fetching users: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch users")
+
+
+@router.get("/admin/analytics", response_model=dict)
+async def get_credit_analytics(current_user: dict = Depends(get_current_user)):
+    """Get credit system analytics (superadmin only)"""
+    if current_user.get('role') != 'superadmin':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin only")
+
+    try:
+        import sqlite3
+        from agents.database import DB_PATH
+
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) as count FROM users")
+        total_users = cursor.fetchone()['count']
+
+        cursor.execute("SELECT COUNT(*) as count FROM user_credits WHERE balance > 0")
+        users_with_balance = cursor.fetchone()['count']
+
+        cursor.execute("SELECT COALESCE(SUM(balance), 0) as total FROM user_credits")
+        total_balance = cursor.fetchone()['total']
+
+        cursor.execute("SELECT COALESCE(SUM(total_purchased), 0) as total FROM user_credits")
+        total_purchased = cursor.fetchone()['total']
+
+        cursor.execute("SELECT COALESCE(SUM(total_spent), 0) as total FROM user_credits")
+        total_spent = cursor.fetchone()['total']
+
+        conn.close()
+
+        return {
+            "total_users": total_users,
+            "users_with_balance": users_with_balance,
+            "total_balance": total_balance,
+            "total_purchased": total_purchased,
+            "total_spent": total_spent,
+            "estimated_revenue_usd": (total_purchased / 1000) * 10
+        }
+    except Exception as e:
+        logger.error(f"Error fetching analytics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch analytics")
+
+
 @router.get("/estimate", response_model=dict)
 async def estimate_cost(
     prompt: str,
