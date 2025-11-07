@@ -10,11 +10,13 @@ import logging
 
 from api.routers.auth_router import get_current_user
 from agents.credit_manager import CreditManager
+from agents.model_selector import ModelSelector
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/credits", tags=["credits"])
 credit_manager = CreditManager()
+model_selector = ModelSelector()
 
 
 # ============= REQUEST/RESPONSE MODELS =============
@@ -359,30 +361,62 @@ async def grant_bonus_credits(
 @router.get("/estimate", response_model=dict)
 async def estimate_cost(
     prompt: str,
-    task_type: str = "general",
+    prefer_cheap: bool = False,
+    provider: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Estimate credit cost for a prompt (before sending request)
+    Estimate credit cost for a prompt using intelligent model selection
 
-    NOTE: This is a placeholder. Will be implemented with ModelSelector in Phase 3.
+    This endpoint analyzes your prompt and recommends the best AI model
+    based on task type, complexity, and your available credits.
 
     Args:
         prompt: The prompt to estimate
-        task_type: Type of task (general, coding, writing, analysis)
+        prefer_cheap: Prefer cheaper models even if quality is lower (default: False)
+        provider: Force specific provider like 'openai', 'anthropic', etc. (optional)
 
     Returns:
-        Estimated credit cost and selected model
+        Estimated credit cost, selected model, and reasoning
     """
-    # Placeholder implementation
-    # Will be replaced with actual ModelSelector logic
-    estimated_tokens = len(prompt.split()) * 1.3  # Rough estimate
-    estimated_cost = int(estimated_tokens / 1000 * 25)  # Rough cost using GPT-4o pricing
+    try:
+        # Get user's current credit balance
+        user_balance = credit_manager.get_balance(current_user['id'])
 
-    return {
-        "estimated_cost_credits": max(1, estimated_cost),
-        "estimated_tokens": int(estimated_tokens),
-        "suggested_model": "gpt-4o",
-        "provider": "openai",
-        "note": "This is a rough estimate. Actual cost may vary."
-    }
+        # Use ModelSelector to analyze and recommend model
+        recommendation = model_selector.select_model(
+            prompt=prompt,
+            user_credits=user_balance,
+            prefer_cheap=prefer_cheap,
+            required_provider=provider
+        )
+
+        # Analyze prompt for additional context
+        analysis = model_selector.analyze_prompt(prompt)
+
+        return {
+            "estimated_cost_credits": recommendation.estimated_cost_credits,
+            "estimated_tokens": analysis.estimated_tokens,
+            "selected_model": recommendation.model,
+            "provider": recommendation.provider,
+            "quality_score": recommendation.quality_score,
+            "cost_tier": recommendation.cost_tier,
+            "user_balance": user_balance,
+            "sufficient_credits": user_balance >= recommendation.estimated_cost_credits,
+            "task_analysis": {
+                "task_type": analysis.task_type,
+                "complexity": analysis.complexity,
+                "requires_reasoning": analysis.requires_reasoning,
+                "requires_code_generation": analysis.requires_code_generation,
+                "requires_creativity": analysis.requires_creativity
+            },
+            "reasoning": recommendation.reasoning,
+            "credits_per_1k_tokens": recommendation.credits_per_1k_tokens
+        }
+
+    except Exception as e:
+        logger.error(f"Error estimating cost: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to estimate cost: {str(e)}"
+        )
