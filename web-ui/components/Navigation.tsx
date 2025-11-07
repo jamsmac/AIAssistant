@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useApi } from '@/lib/useApi';
 import ThemeToggle from './ThemeToggle';
+import CreditBalance from './CreditBalance';
 import {
   Home,
   MessageSquare,
@@ -23,6 +24,7 @@ import {
   Cpu,
   FileText,
   TrendingUp,
+  Coins,
 } from 'lucide-react';
 
 interface NavItem {
@@ -69,6 +71,7 @@ export default function Navigation() {
     { href: '/agents', label: 'Agents', icon: Cpu },
     { href: '/workflows', label: 'Workflows', icon: Zap },
     { href: '/integrations', label: 'Integrations', icon: Plug },
+    { href: '/credits', label: 'Credits', icon: Coins },
     { href: '/blog', label: 'Blog', icon: FileText },
     { href: '/admin/blog', label: 'Blog Admin', icon: FileText },
     { href: '/admin/analytics', label: 'Analytics', icon: TrendingUp },
@@ -144,7 +147,13 @@ export default function Navigation() {
           </nav>
 
           {/* Bottom User Section */}
-          <div className="border-t border-gray-200 dark:border-gray-800 p-4 transition-colors">
+          <div className="border-t border-gray-200 dark:border-gray-800 p-4 transition-colors space-y-3">
+            {/* Credit Balance Widget */}
+            <div className="px-1">
+              <CreditBalance />
+            </div>
+
+            {/* User Info */}
             <div className="flex items-center gap-3 px-3 py-2 text-sm text-gray-600 dark:text-gray-400">
               <User className="w-5 h-5" aria-hidden="true" />
               <span className="truncate">{userEmail || 'Loading...'}</span>
@@ -338,6 +347,7 @@ export default function Navigation() {
     </>
   );
 }
+
 
 
 
