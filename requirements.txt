@@ -44,6 +44,9 @@ email-validator==2.3.0
 pyotp==2.9.0
 qrcode[pil]==7.4.2
 
+# Payment Processing
+stripe==10.1.0
+
 # Google OAuth
 google-auth==2.23.0
 google-auth-oauthlib==1.1.0
