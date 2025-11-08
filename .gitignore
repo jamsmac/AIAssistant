@@ -30,3 +30,4 @@ RAILWAY_VARIABLES.md.backup
 coverage.json
 coverage.xml
 htmlcov/
+.env.stripe

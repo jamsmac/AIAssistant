@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import logging
+import os
 
 from api.routers.auth_router import get_current_user
 from agents.credit_manager import CreditManager
@@ -184,9 +185,8 @@ async def purchase_credits(
 
         # Create Stripe Checkout Session
         if purchase.payment_method == 'stripe':
-            # Determine success/cancel URLs
-            # In production, these would be your frontend URLs
-            base_url = "http://localhost:3000"  # TODO: Get from config
+            # Get frontend URL from environment
+            base_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
             success_url = f"{base_url}/credits/success"
             cancel_url = f"{base_url}/credits"
 
