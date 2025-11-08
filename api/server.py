@@ -243,6 +243,30 @@ try:
 except ImportError as e:
     logger.warning(f"Could not load AI router: {e}")
 
+# Import and include Gateway router
+try:
+    from api.routers import gateway_router
+    app.include_router(gateway_router.router)
+    logger.info("Gateway router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Gateway router: {e}")
+
+# Import and include Communications router
+try:
+    from api.routers import communications_router
+    app.include_router(communications_router.router)
+    logger.info("Communications router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Communications router: {e}")
+
+# Import and include Documentation Analyzer router
+try:
+    from api.routers import doc_analyzer_router
+    app.include_router(doc_analyzer_router.router)
+    logger.info("Documentation Analyzer router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Documentation Analyzer router: {e}")
+
 # ============================================
 # Startup and Shutdown Events
 # ============================================

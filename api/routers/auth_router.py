@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/auth", tags=["authentication"])
 # Initialize services
 db = get_db()
 tfa = TwoFactorAuth(db)
-csrf = CSRFProtection()
+csrf = CSRFProtection(secret_key=os.getenv("SECRET_KEY", "default-secret-key-change-me"))
 
 # Pydantic models
 class RegisterRequest(BaseModel):

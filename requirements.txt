@@ -15,6 +15,7 @@ qdrant-client==1.12.1
 # Database
 supabase==2.9.0
 psycopg2-binary==2.9.10
+asyncpg==0.29.0
 redis==5.2.0
 sqlalchemy==1.4,<2.1
 
@@ -41,7 +42,7 @@ tiktoken==0.7.0  # Token counting for OpenAI models
 bcrypt==4.2.0
 PyJWT>=2.10.1
 email-validator==2.3.0
-pyotp==2.9.0
+# pyotp==2.9.0  # Temporarily disabled for Railway deployment
 qrcode[pil]==7.4.2
 
 # Payment Processing
@@ -67,6 +68,10 @@ Pillow==10.4.0  # Image processing
 python-magic==0.4.27  # File type detection
 pytesseract==0.3.10  # OCR for images
 
+# Documentation Analysis
+openapi-spec-validator==0.7.1  # OpenAPI/Swagger validation
+jsonschema==4.20.0  # JSON schema validation
+
 # Testing
 pytest==8.3.3
 pytest-asyncio==0.24.0
@@ -74,3 +79,7 @@ pytest-cov==5.0.0
 
 # Workflow Scheduling
 APScheduler==3.10.4  # Background task scheduler for workflows
+
+# Communication Integrations
+python-telegram-bot==20.7  # Telegram bot integration
+aiogram==3.3.0  # Alternative async Telegram library

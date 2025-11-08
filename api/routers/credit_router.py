@@ -10,10 +10,31 @@ from typing import List, Optional
 import logging
 import os
 
-from api.routers.auth_router import get_current_user
+# Temporarily remove auth_router import to fix Railway deployment
+# from api.routers.auth_router import get_current_user
 from agents.credit_manager import CreditManager
 from agents.model_selector import ModelSelector
 from agents.payment_service import get_payment_service
+
+# Simple auth dependency for Railway deployment
+from fastapi import HTTPException, status, Header
+import jwt
+import os
+
+def get_current_user_simple(authorization: str = Header(None)):
+    """Simplified auth for Railway deployment"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    token = authorization.replace("Bearer ", "")
+    try:
+        payload = jwt.decode(token, os.getenv("JWT_SECRET", "default"), algorithms=["HS256"])
+        return payload
+    except:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# Use simplified auth
+get_current_user = get_current_user_simple
 
 logger = logging.getLogger(__name__)
 

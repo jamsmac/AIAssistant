@@ -25,6 +25,7 @@ import {
   FileText,
   TrendingUp,
   Coins,
+  Mail,
 } from 'lucide-react';
 
 interface NavItem {
@@ -67,10 +68,12 @@ export default function Navigation() {
   const navItems: NavItem[] = [
     { href: '/', label: 'Dashboard', icon: Home },
     { href: '/chat', label: 'Chat', icon: MessageSquare },
+    { href: '/admin/inbox', label: 'Inbox', icon: Mail },
     { href: '/projects', label: 'Projects', icon: Folder },
     { href: '/agents', label: 'Agents', icon: Cpu },
     { href: '/workflows', label: 'Workflows', icon: Zap },
     { href: '/integrations', label: 'Integrations', icon: Plug },
+    { href: '/admin/doc-analyzer', label: 'Doc Analyzer', icon: FileText },
     { href: '/credits', label: 'Credits', icon: Coins },
     { href: '/blog', label: 'Blog', icon: FileText },
     { href: '/admin/blog', label: 'Blog Admin', icon: FileText },
@@ -347,6 +350,7 @@ export default function Navigation() {
     </>
   );
 }
+
 
 
 

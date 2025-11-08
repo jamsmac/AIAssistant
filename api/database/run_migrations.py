@@ -167,11 +167,20 @@ class MigrationRunner:
         logger.info("\nVerifying schema...")
 
         expected_tables = [
+            # Core tables (001_initial_schema.sql)
             'users', 'oauth_accounts', 'sessions',
             'projects', 'project_databases',
             'workflows', 'workflow_triggers', 'workflow_actions', 'workflow_executions',
             'chat_sessions', 'chat_messages',
-            'model_rankings', 'audit_logs', 'rate_limits'
+            'model_rankings', 'audit_logs', 'rate_limits',
+
+            # FractalAgents tables (002_fractal_agents_schema.sql)
+            'fractal_agents', 'agent_connectors', 'agent_collective_memory',
+            'agent_skills', 'task_routing_history',
+
+            # Blog Platform tables (003_blog_platform_schema.sql)
+            'blog_categories', 'blog_authors', 'blog_posts', 'blog_post_versions',
+            'blog_comments', 'blog_subscriptions', 'blog_social_shares', 'blog_analytics'
         ]
 
         # Get existing tables

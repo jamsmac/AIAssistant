@@ -223,7 +223,18 @@ class HistoryDatabase:
 
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
-    
+
+    def execute_query(self, query: str, params: tuple = None):
+        """Execute a SQL query (for compatibility with TwoFactorAuth)"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            conn.commit()
+            return cursor
+
     def add_request(
         self,
         prompt: str,
