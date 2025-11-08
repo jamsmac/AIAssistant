@@ -1,8 +1,15 @@
 venv/
 __pycache__/
 *.pyc
+# Environment files - DO NOT COMMIT!
 .env
 .env.local
+.env.backup
+.env.*.backup
+.env.*.local
+.env.development
+.env.test
+.env.production
 .DS_Store
 data/history.db
 node_modules/
