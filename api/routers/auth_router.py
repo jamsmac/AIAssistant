@@ -17,7 +17,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from agents.database import HistoryDatabase, get_db
-from agents.auth import get_current_user, create_access_token
+from agents.auth import get_current_user, create_jwt_token
 from agents.two_factor_auth import TwoFactorAuth
 from agents.csrf_protection import CSRFProtection
 
@@ -85,7 +85,7 @@ async def register(request: RegisterRequest):
     user_id = db.create_user(request.email, password_hash)
 
     # Create access token
-    access_token = create_access_token(data={"sub": str(user_id), "email": request.email})
+    access_token = create_jwt_token(user_id=user_id, email=request.email)
 
     return AuthResponse(
         access_token=access_token,
@@ -132,9 +132,7 @@ async def login(request: LoginRequest, response: Response):
     db.update_last_login(user['id'])
 
     # Create access token
-    access_token = create_access_token(
-        data={"sub": str(user['id']), "email": user['email']}
-    )
+    access_token = create_jwt_token(user_id=user['id'], email=user['email'])
 
     # Set secure cookie
     response.set_cookie(
