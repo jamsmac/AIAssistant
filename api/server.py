@@ -235,6 +235,14 @@ try:
 except ImportError as e:
     logger.warning(f"Could not load credit router: {e}")
 
+# Import and include AI router with credits
+try:
+    from api.routers import ai_router
+    app.include_router(ai_router.router)
+    logger.info("AI router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load AI router: {e}")
+
 # ============================================
 # Startup and Shutdown Events
 # ============================================
