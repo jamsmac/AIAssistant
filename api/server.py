@@ -521,13 +521,13 @@ async def startup_event():
 
     # Start workflow scheduler for scheduled triggers
     try:
-        import sys
-        sys.path.append(str(Path(__file__).parent.parent / "agents"))
-        from workflow_scheduler import start_scheduler
-        start_scheduler()
-        logger.info("Workflow scheduler started successfully")
+        from api.scheduler import start_scheduler
+        workflow_scheduler = start_scheduler()
+        logger.info(f"Workflow scheduler started successfully with {len(workflow_scheduler.get_all_jobs())} jobs")
     except Exception as e:
-        logger.error(f"Failed to start workflow scheduler: {e}")
+        logger.error(f"Failed to start workflow scheduler: {e}", exc_info=True)
+        if is_production:
+            logger.warning("Workflow scheduler failed to start - scheduled workflows will not run")
 
     # Start system monitoring
     asyncio.create_task(system_monitor.start(interval=60))
@@ -558,8 +558,8 @@ async def shutdown_event():
 
     # Stop workflow scheduler
     try:
-        from workflow_scheduler import stop_scheduler
-        stop_scheduler()
+        from api.scheduler import shutdown_scheduler
+        shutdown_scheduler()
         logger.info("Workflow scheduler stopped")
     except Exception as e:
         logger.error(f"Error stopping workflow scheduler: {e}")

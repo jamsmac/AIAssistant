@@ -31,3 +31,32 @@ coverage.json
 coverage.xml
 htmlcov/
 .env.stripe
+
+# Documentation files (local development/analysis only)
+*_REPORT.md
+*_SUMMARY.md
+*_GUIDE.md
+*_STATUS.md
+*_COMPLETE.md
+*_PROGRESS.md
+*_DESIGN.md
+*_ANALYSIS.md
+AUDIT_*.md
+PHASE_*.md
+SESSION_*.md
+MODULE_*.md
+TASK_*.md
+IMPROVEMENTS_*.md
+COMPREHENSIVE_*.md
+FINAL_*.md
+WHATS_NEW.txt
+START_HERE.md
+
+# Keep specific important docs
+!QUICK_START.md
+!USER_GUIDE.md
+!API_DOCUMENTATION.md
+!AUTH_TESTING_GUIDE.md
+!DEPLOYMENT_GUIDE.md
+!docs/**/*.md
+!README.md

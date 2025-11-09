@@ -420,3 +420,106 @@ async def get_action_types():
             }
         ]
     }
+
+
+# ============================================
+# Scheduler Management Endpoints
+# ============================================
+
+@router.get("/{workflow_id}/schedule/next-run")
+async def get_next_run_time(
+    workflow_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get next scheduled run time for a workflow"""
+    try:
+        from api.scheduler import get_scheduler
+        scheduler = get_scheduler()
+        next_run = scheduler.get_next_run_time(workflow_id)
+
+        if next_run:
+            return {
+                "workflow_id": workflow_id,
+                "next_run_time": next_run.isoformat(),
+                "scheduled": True
+            }
+        else:
+            return {
+                "workflow_id": workflow_id,
+                "next_run_time": None,
+                "scheduled": False
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{workflow_id}/schedule/pause")
+async def pause_workflow_schedule(
+    workflow_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Pause scheduled workflow"""
+    try:
+        from api.scheduler import get_scheduler
+        scheduler = get_scheduler()
+        scheduler.pause_workflow(workflow_id)
+
+        return {
+            "workflow_id": workflow_id,
+            "status": "paused",
+            "message": "Workflow schedule paused successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{workflow_id}/schedule/resume")
+async def resume_workflow_schedule(
+    workflow_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Resume paused workflow schedule"""
+    try:
+        from api.scheduler import get_scheduler
+        scheduler = get_scheduler()
+        scheduler.resume_workflow(workflow_id)
+
+        return {
+            "workflow_id": workflow_id,
+            "status": "active",
+            "message": "Workflow schedule resumed successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/schedule/jobs")
+async def get_all_scheduled_jobs(current_user: dict = Depends(get_current_user)):
+    """Get all scheduled workflow jobs"""
+    try:
+        from api.scheduler import get_scheduler
+        scheduler = get_scheduler()
+        jobs = scheduler.get_all_jobs()
+
+        return {
+            "jobs": jobs,
+            "total_count": len(jobs)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/schedule/reload")
+async def reload_scheduled_workflows(current_user: dict = Depends(get_current_user)):
+    """Reload all scheduled workflows from database"""
+    try:
+        from api.scheduler import get_scheduler
+        scheduler = get_scheduler()
+        count = scheduler.load_scheduled_workflows()
+
+        return {
+            "message": "Scheduled workflows reloaded successfully",
+            "workflows_loaded": count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
