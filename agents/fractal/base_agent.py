@@ -363,13 +363,23 @@ class FractalAgent:
 
             response_text = response.content[0].text
 
+            usage = getattr(response, "usage", None)
+            tokens_used = 0
+            if usage is not None:
+                tokens_used = (
+                    getattr(usage, "total_tokens", None)
+                    or getattr(usage, "output_tokens", None)
+                    or getattr(usage, "input_tokens", None)
+                    or 0
+                )
+
             result = {
                 'task_id': task.get('id'),
                 'agent_id': self.agent_id,
                 'agent_name': self.data['name'],
                 'response': response_text,
                 'success': True,
-                'tokens_used': response.usage.total_tokens,
+                'tokens_used': tokens_used,
                 'model': self.data['model']
             }
 

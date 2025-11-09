@@ -10,40 +10,114 @@ SECRET_KEY is read from environment variable SECRET_KEY. Ensure it is set.
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 import bcrypt
 import jwt
+from fastapi import Request, HTTPException
 
 
 ALGORITHM = "HS256"
 
 
+def generate_secret_key(length: int = 64) -> str:
+    """
+    Генерирует криптографически стойкий SECRET_KEY.
+    
+    Args:
+        length: Длина ключа в байтах (по умолчанию 64, что даёт ~86 символов в base64)
+        
+    Returns:
+        Случайный URL-safe base64 ключ
+    """
+    import secrets
+    return secrets.token_urlsafe(length)
+
+
+def validate_secret_key(secret: str, is_production: bool = False) -> Tuple[bool, Optional[str]]:
+    """
+    Валидирует SECRET_KEY на соответствие требованиям безопасности.
+    
+    Args:
+        secret: SECRET_KEY для валидации
+        is_production: True если это production окружение
+        
+    Returns:
+        Tuple (is_valid, error_message)
+        - is_valid: True если ключ валиден
+        - error_message: Сообщение об ошибке или None
+    """
+    if not secret:
+        return False, "SECRET_KEY is not set"
+    
+    if not isinstance(secret, str):
+        return False, "SECRET_KEY must be a string"
+    
+    # Минимальная длина зависит от окружения
+    min_length = 64 if is_production else 32
+    
+    if len(secret) < min_length:
+        return False, (
+            f"SECRET_KEY is too short ({len(secret)} chars). "
+            f"Minimum {min_length} characters required for {'production' if is_production else 'development'}. "
+            f"Generate with: python scripts/generate_secret_key.py"
+        )
+    
+    # Проверка энтропии: ключ должен содержать разные типы символов
+    has_lower = any(c.islower() for c in secret)
+    has_upper = any(c.isupper() for c in secret)
+    has_digit = any(c.isdigit() for c in secret)
+    has_special = any(c in "-_" for c in secret)  # URL-safe base64 characters
+    
+    # В production требуем более высокую энтропию
+    if is_production:
+        if not (has_lower or has_upper) or not has_digit:
+            return False, (
+                "SECRET_KEY has insufficient entropy for production. "
+                "Key should contain a mix of letters, numbers, and special characters."
+            )
+    
+    # Проверка на слабые паттерны
+    weak_patterns = [
+        "password", "secret", "key", "admin", "test",
+        "12345", "abcdef", "qwerty", "00000", "aaaaa"
+    ]
+    secret_lower = secret.lower()
+    for pattern in weak_patterns:
+        if pattern in secret_lower:
+            return False, f"SECRET_KEY contains weak pattern: '{pattern}'"
+    
+    return True, None
+
+
 def _get_secret_key() -> str:
     """
     Fetch SECRET_KEY from environment.
-    Validates that key is strong enough (minimum 32 characters).
+    Validates that key is strong enough (minimum 32 chars for dev, 64 for production).
     Raises a ValueError if not configured or too weak.
     """
     secret = os.getenv("SECRET_KEY")
     if not secret:
-        raise ValueError("SECRET_KEY environment variable is not set")
-    
-    # Валидация: SECRET_KEY должен быть минимум 32 символа для production
-    if len(secret) < 32:
-        import warnings
-        warnings.warn(
-            f"SECRET_KEY is too short ({len(secret)} chars). "
-            "For production, use at least 64 characters. "
-            "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(64))'"
+        raise ValueError(
+            "SECRET_KEY environment variable is not set. "
+            "Generate one with: python scripts/generate_secret_key.py"
         )
-        # В development разрешаем короткие ключи, но предупреждаем
-        if os.getenv("ENVIRONMENT", "development").lower() == "production":
-            raise ValueError(
-                f"SECRET_KEY is too short for production ({len(secret)} chars). "
-                "Minimum 64 characters required. "
-                "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(64))'"
-            )
+    
+    # Определяем окружение
+    environment = os.getenv("ENVIRONMENT", "development").lower()
+    is_production = environment == "production"
+    
+    # Валидируем ключ
+    is_valid, error_message = validate_secret_key(secret, is_production)
+    
+    if not is_valid:
+        if is_production:
+            # В production строго требуем валидный ключ
+            raise ValueError(error_message)
+        else:
+            # В development предупреждаем, но разрешаем
+            import warnings
+            warnings.warn(f"SECRET_KEY validation warning: {error_message}")
     
     return secret
 
@@ -222,13 +296,11 @@ def get_current_user(authorization: str = None, cookies: Dict[str, str] = None):
         token = cookies.get("auth_token")
 
     if not token:
-        from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Verify token
     payload = verify_jwt_token(token)
     if not payload:
-        from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     # Fetch user role from database
@@ -254,6 +326,19 @@ def get_current_user(authorization: str = None, cookies: Dict[str, str] = None):
         "id": payload["sub"],
         "email": payload["email"],
         "role": role
+    }
+
+
+def get_current_user_from_token(request: Request) -> Dict[str, Any]:
+    """FastAPI dependency wrapper to extract user from cookies/headers."""
+    authorization = request.headers.get("Authorization")
+    cookies = dict(request.cookies) if request.cookies else {}
+    user = get_current_user(authorization=authorization, cookies=cookies)
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "role": user.get("role"),
+        "user_id": user.get("id"),
     }
 
 

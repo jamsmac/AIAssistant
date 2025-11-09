@@ -46,17 +46,9 @@ export default function IntegrationsPage() {
   // Fetch integrations from API
   const fetchIntegrations = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setError('Not authenticated');
-        setLoading(false);
-        return;
-      }
-
+      // Auth token now comes from httpOnly cookies
       const response = await fetch(`${API_URL}/api/integrations`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -173,16 +165,11 @@ export default function IntegrationsPage() {
   // Handle OAuth connection
   const handleOAuthConnect = async (integrationType: string) => {
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        showToast('Not authenticated', 'error');
-        return;
-      }
-
+      // Auth token now comes from httpOnly cookies
       const response = await fetch(`${API_URL}/api/integrations/connect`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ integration_type: integrationType }),
@@ -222,16 +209,11 @@ export default function IntegrationsPage() {
     setTelegramConnecting(true);
 
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        showToast('Not authenticated', 'error');
-        return;
-      }
-
+      // Auth token now comes from httpOnly cookies
       const response = await fetch(`${API_URL}/api/integrations/connect`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -265,19 +247,12 @@ export default function IntegrationsPage() {
     setDisconnecting(true);
 
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        showToast('Not authenticated', 'error');
-        return;
-      }
-
+      // Auth token now comes from httpOnly cookies
       const response = await fetch(
         `${API_URL}/api/integrations/disconnect?integration_type=${disconnectTarget.type}`,
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          credentials: 'include',
         }
       );
 
@@ -301,19 +276,12 @@ export default function IntegrationsPage() {
     setTestingConnection(integration.type);
 
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        showToast('Not authenticated', 'error');
-        return;
-      }
-
+      // Auth token now comes from httpOnly cookies
       const response = await fetch(
         `${API_URL}/api/integrations/test?integration_type=${integration.type}`,
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          credentials: 'include',
         }
       );
 

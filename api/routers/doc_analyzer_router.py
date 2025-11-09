@@ -19,6 +19,7 @@ from ..doc_analyzer import (
     DocumentConfig,
     AnalysisStatus
 )
+from ..doc_analyzer.sheets_exporter import get_sheets_exporter
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +340,111 @@ async def get_analysis_results(doc_id: str, pool: asyncpg.Pool = Depends(get_db_
         raise
     except Exception as e:
         logger.error(f"Failed to get analysis results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/{doc_id}/export/sheets")
+async def export_to_google_sheets(doc_id: str, pool: asyncpg.Pool = Depends(get_db_pool)):
+    """Export analysis results to Google Sheets."""
+    try:
+        # Get document and analysis data
+        async with pool.acquire() as conn:
+            # Get document info
+            doc_row = await conn.fetchrow("""
+                SELECT id, name, status, source_url
+                FROM doc_sources WHERE id = $1
+            """, doc_id)
+
+            if not doc_row:
+                raise HTTPException(status_code=404, detail="Document not found")
+
+            if doc_row['status'] != 'completed':
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Document analysis not completed. Status: {doc_row['status']}"
+                )
+
+            # Get API metadata from source URL
+            api_name = doc_row['name']
+            api_version = "unknown"
+            spec_version = "unknown"
+
+            # Try to get version info from analysis
+            analysis_row = await conn.fetchrow("""
+                SELECT results FROM doc_analyses
+                WHERE doc_source_id = $1 AND analysis_type = 'full'
+                ORDER BY created_at DESC LIMIT 1
+            """, doc_id)
+
+            if analysis_row and analysis_row['results']:
+                results = analysis_row['results']
+                if isinstance(results, str):
+                    results = json.loads(results)
+                api_version = results.get('api_version', 'unknown')
+                spec_version = results.get('spec_version', results.get('openapi_version', 'unknown'))
+
+            # Get endpoints
+            endpoint_rows = await conn.fetch("""
+                SELECT method, path, summary, description, ai_explanation,
+                       parameters, request_body, responses, tags
+                FROM doc_endpoints
+                WHERE doc_source_id = $1
+                ORDER BY path, method
+            """, doc_id)
+
+            endpoints = [dict(row) for row in endpoint_rows]
+
+            # Get schemas
+            schema_rows = await conn.fetch("""
+                SELECT schema_name, schema_type, properties, required_fields,
+                       description, ai_explanation, generated_sql
+                FROM doc_schemas
+                WHERE doc_source_id = $1
+                ORDER BY schema_name
+            """, doc_id)
+
+            schemas = {row['schema_name']: dict(row) for row in schema_rows}
+
+            # Get summary
+            summary_row = await conn.fetchrow("""
+                SELECT ai_summary FROM doc_analyses
+                WHERE doc_source_id = $1 AND analysis_type = 'full'
+                ORDER BY created_at DESC LIMIT 1
+            """, doc_id)
+
+            summary = summary_row['ai_summary'] if summary_row else ""
+
+        # Export to Google Sheets
+        exporter = get_sheets_exporter()
+        result = await exporter.export_analysis(
+            doc_source_id=doc_id,
+            api_name=api_name,
+            api_version=api_version,
+            spec_version=spec_version,
+            endpoints=endpoints,
+            schemas=schemas,
+            summary=summary
+        )
+
+        # Save export record if successful
+        if result.get('success'):
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO doc_exports (
+                        doc_source_id, export_type, destination_url,
+                        exported_endpoint_count, exported_schema_count,
+                        status, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """, doc_id, 'google_sheets', result.get('sheet_url'),
+                    len(endpoints), len(schemas), 'completed',
+                    json.dumps({'sheet_id': result.get('sheet_id')}))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export to Google Sheets: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -338,3 +338,66 @@ class OAuthManager:
 
 # Singleton instance
 oauth_manager = OAuthManager()
+
+
+class _OAuthProviderAdapter:
+    """Adapter to maintain backward compatibility with legacy router interface."""
+
+    def __init__(self, provider: OAuthProvider):
+        self._provider = provider
+
+    def _with_redirect(self, redirect_uri: str):
+        class _RedirectCtx:
+            def __init__(self, outer, new_uri):
+                self.outer = outer
+                self.new_uri = new_uri
+                self.original = outer._provider.redirect_uri
+
+            def __enter__(self):
+                self.outer._provider.redirect_uri = self.new_uri
+
+            def __exit__(self, exc_type, exc, tb):
+                self.outer._provider.redirect_uri = self.original
+
+        return _RedirectCtx(self, redirect_uri)
+
+    def get_auth_url(self, redirect_uri: str, state: str):
+        with self._with_redirect(redirect_uri):
+            return self._provider.get_authorization_url(state=state)
+
+    async def exchange_code(self, code: str, redirect_uri: str):
+        with self._with_redirect(redirect_uri):
+            token_data = await self._provider.exchange_code_for_token(code)
+        if "expires_at" not in token_data and "expires_in" in token_data:
+            token_data["expires_at"] = None
+        return token_data
+
+    async def get_account_info(self, access_token: str):
+        return await self._provider.get_user_info(access_token)
+
+
+class OAuthProviderFactory:
+    """Legacy factory retained for integration router compatibility."""
+
+    SERVICE_MAP = {
+        "gmail": "google",
+        "google_drive": "google",
+        "google": "google",
+        "github": "github",
+        "microsoft": "microsoft",
+    }
+
+    def __init__(self):
+        self.manager = oauth_manager
+
+    def get_provider(self, service: str):
+        canonical = self.SERVICE_MAP.get(service.lower())
+        if not canonical:
+            return None
+        provider = self.manager.get_provider(canonical)
+        if not provider:
+            return None
+        return _OAuthProviderAdapter(provider)
+
+    def list_providers(self):
+        return self.manager.list_available_providers()

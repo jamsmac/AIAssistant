@@ -14,7 +14,8 @@
     "test:coverage": "vitest run --coverage",
     "test:security": "vitest run tests/security",
     "test:e2e": "playwright test",
-    "prepare": "husky"
+    "prepare": "husky",
+    "analyze": "ANALYZE=true npm run build"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.22.0",
@@ -37,6 +38,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "^15.5.6",
     "@playwright/test": "^1.56.1",
     "@tailwindcss/postcss": "^4.1.16",
     "@testing-library/jest-dom": "^6.9.1",

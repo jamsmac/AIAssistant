@@ -1,65 +1,88 @@
 """
-Database operations tests
+Database operations tests for HistoryDatabase
 """
+
+from __future__ import annotations
+
+import json
+
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models import User, Project, WorkflowTemplate
+from agents.database import HistoryDatabase
 
 
-class TestUserModel:
-    """Test User model operations"""
-
-    @pytest.mark.asyncio
-    async def test_create_user(self, test_session: AsyncSession):
-        """Test user creation"""
-        user = User(
-            email="newuser@example.com",
-            hashed_password="hashed_pwd",
-            is_active=True
-        )
-        test_session.add(user)
-        await test_session.commit()
-        await test_session.refresh(user)
-
-        assert user.id is not None
-        assert user.email == "newuser@example.com"
-
-    @pytest.mark.asyncio
-    async def test_query_user(self, test_session: AsyncSession, test_user):
-        """Test querying user"""
-        result = await test_session.execute(
-            select(User).where(User.email == test_user.email)
-        )
-        user = result.scalar_one()
-
-        assert user.id == test_user.id
-
-    @pytest.mark.asyncio
-    async def test_update_user(self, test_session: AsyncSession, test_user):
-        """Test updating user"""
-        test_user.is_verified = True
-        await test_session.commit()
-        await test_session.refresh(test_user)
-
-        assert test_user.is_verified is True
+@pytest.fixture()
+def history_db(tmp_path) -> HistoryDatabase:
+    db_path = tmp_path / "history.db"
+    return HistoryDatabase(str(db_path))
 
 
-class TestProjectModel:
-    """Test Project model operations"""
+def test_create_and_fetch_user(history_db: HistoryDatabase):
+    user_id = history_db.create_user("user@example.com", "hashed")
+    assert user_id > 0
 
-    @pytest.mark.asyncio
-    async def test_create_project(self, test_session: AsyncSession, test_user):
-        """Test project creation"""
-        project = Project(
-            name="Test Project",
-            description="Description",
-            user_id=test_user.id
-        )
-        test_session.add(project)
-        await test_session.commit()
-        await test_session.refresh(project)
+    user = history_db.get_user_by_email("user@example.com")
+    assert user is not None
+    assert user["email"] == "user@example.com"
+    assert user["is_active"] == 1
 
-        assert project.id is not None
-        assert project.name == "Test Project"
+
+def test_update_user_last_login(history_db: HistoryDatabase):
+    user_id = history_db.create_user("user2@example.com", "hashed")
+    updated = history_db.update_user_last_login(user_id)
+    assert updated == 1
+
+    updated_user = history_db.get_user_by_email("user2@example.com")
+    assert updated_user["last_login_at"] is not None
+
+
+def test_project_crud(history_db: HistoryDatabase):
+    user_id = history_db.create_user("project-owner@example.com", "hashed")
+
+    project_id = history_db.create_project(user_id=user_id, name="Test Project", description="Desc")
+    assert project_id > 0
+
+    project = history_db.get_project(project_id, user_id)
+    assert project is not None
+    assert project["name"] == "Test Project"
+
+    assert history_db.update_project(project_id, user_id, name="Updated", description="New desc")
+    updated = history_db.get_project(project_id, user_id)
+    assert updated["name"] == "Updated"
+
+    projects = history_db.get_projects(user_id)
+    assert len(projects) == 1
+
+    assert history_db.delete_project(project_id, user_id) is True
+    assert history_db.get_project(project_id, user_id) is None
+
+
+def test_workflow_storage(history_db: HistoryDatabase):
+    user_id = history_db.create_user("flow@example.com", "hashed")
+
+    trigger_config = json.dumps({"type": "manual"})
+    actions = json.dumps([{"type": "notify", "config": {"channel": "ops"}}])
+
+    workflow_id = history_db.create_workflow(
+        user_id=user_id,
+        name="WF",
+        trigger_type="manual",
+        trigger_config=trigger_config,
+        actions_json=actions,
+    )
+    assert workflow_id > 0
+
+    workflow = history_db.get_workflow(workflow_id, user_id)
+    assert workflow is not None
+    assert workflow["name"] == "WF"
+
+    execution_id = history_db.create_execution(
+        workflow_id=workflow_id,
+        status="completed",
+        result_json=json.dumps({"message": "ok"}),
+    )
+    assert execution_id > 0
+
+    executions = history_db.get_executions(workflow_id)
+    assert len(executions) == 1
+    assert executions[0]["status"] == "completed"

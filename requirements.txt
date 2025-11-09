@@ -48,11 +48,12 @@ qrcode[pil]==7.4.2
 # Payment Processing
 stripe==10.1.0
 
-# Google OAuth
-google-auth==2.23.0
-google-auth-oauthlib==1.1.0
-google-auth-httplib2==0.1.1
+# Google OAuth & Sheets
+google-auth>=2.41.1
+google-auth-oauthlib>=1.2.3
+google-auth-httplib2>=0.2.0
 google-api-python-client==2.100.0
+gspread>=6.2.1  # Google Sheets API wrapper
 
 # Monitoring & Error Tracking
 sentry-sdk[fastapi]==2.0.0

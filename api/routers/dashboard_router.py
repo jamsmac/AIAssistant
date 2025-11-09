@@ -33,11 +33,6 @@ class StatsResponse(BaseModel):
     total_cost: float
     active_sessions: int
 
-class HealthResponse(BaseModel):
-    status: str
-    checks: Dict[str, bool]
-    timestamp: str
-
 class DashboardStats(BaseModel):
     user_stats: Dict[str, Any]
     ai_stats: Dict[str, Any]
@@ -292,38 +287,13 @@ async def get_workflow_stats_chart(current_user: dict = Depends(get_current_user
     }
 
 # Health & monitoring endpoints
-@router.get("/health", response_model=HealthResponse)
+from api.routers.monitoring_router import health_check as monitoring_health_check, HealthResponse as MonitoringHealthResponse
+
+
+@router.get("/health", response_model=MonitoringHealthResponse)
 async def health_check():
-    """System health check"""
-    checks = {}
-
-    # Check database
-    try:
-        db.get_user_by_id(1)  # Simple query
-        checks['database'] = True
-    except:
-        checks['database'] = False
-
-    # Check Redis (if configured)
-    try:
-        import redis
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-        r.ping()
-        checks['redis'] = True
-    except:
-        checks['redis'] = False
-
-    # Check AI providers
-    checks['ai_providers'] = bool(os.getenv('OPENAI_API_KEY') or os.getenv('ANTHROPIC_API_KEY'))
-
-    # Overall status
-    all_healthy = all(checks.values())
-
-    return HealthResponse(
-        status="healthy" if all_healthy else "degraded",
-        checks=checks,
-        timestamp=datetime.now().isoformat()
-    )
+    """System health check proxy to monitoring router."""
+    return await monitoring_health_check()
 
 @router.get("/stats", response_model=StatsResponse)
 async def get_system_stats():

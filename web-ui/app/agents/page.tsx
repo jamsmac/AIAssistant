@@ -1,8 +1,17 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import AgentNetworkGraph from '@/components/agents/AgentNetworkGraph'
-import { Activity, Cpu, TrendingUp, Zap, Network, CheckCircle } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { Loader2, Activity, Cpu, TrendingUp, Zap, Network, CheckCircle } from 'lucide-react'
+
+const AgentNetworkGraph = dynamic(() => import('@/components/agents/AgentNetworkGraph'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-64 items-center justify-center rounded-xl border border-gray-800 bg-gray-900/60">
+      <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+    </div>
+  ),
+})
 
 interface Agent {
   id: string;

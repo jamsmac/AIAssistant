@@ -19,14 +19,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from agents.database import HistoryDatabase, get_db
 from agents.auth import get_current_user, create_jwt_token
 from agents.two_factor_auth import TwoFactorAuth
-from agents.csrf_protection import CSRFProtection
+from agents.csrf_protection import get_csrf_protection
+from agents.security_audit import log_security_event
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 # Initialize services
 db = get_db()
 tfa = TwoFactorAuth(db)
-csrf = CSRFProtection(secret_key=os.getenv("SECRET_KEY", "default-secret-key-change-me"))
+csrf = get_csrf_protection(os.getenv("SECRET_KEY", "default-secret-key-change-me"))
 
 # Pydantic models
 class RegisterRequest(BaseModel):
@@ -53,7 +54,7 @@ class UserInfo(BaseModel):
 
 # Endpoints
 @router.post("/register", response_model=AuthResponse)
-async def register(request: RegisterRequest):
+async def register(request: RegisterRequest, http_request: Request):
     """Register a new user"""
     if request.password != request.confirm_password:
         raise HTTPException(
@@ -87,17 +88,32 @@ async def register(request: RegisterRequest):
     # Create access token
     access_token = create_jwt_token(user_id=user_id, email=request.email)
 
+    log_security_event(
+        event="user_register",
+        status="success",
+        user_id=user_id,
+        ip=http_request.client.host if http_request.client else None,
+        metadata={"email": request.email},
+    )
+
     return AuthResponse(
         access_token=access_token,
         user={"id": user_id, "email": request.email}
     )
 
 @router.post("/login", response_model=AuthResponse)
-async def login(request: LoginRequest, response: Response):
+async def login(request: LoginRequest, response: Response, http_request: Request):
     """Login user"""
     user = db.get_user_by_email(request.email)
 
     if not user:
+        log_security_event(
+            event="login_attempt",
+            status="failed",
+            user_id=None,
+            ip=http_request.client.host if http_request.client else None,
+            metadata={"email": request.email, "reason": "unknown_user"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
@@ -108,6 +124,13 @@ async def login(request: LoginRequest, response: Response):
         request.password.encode('utf-8'),
         user['password_hash'].encode('utf-8')
     ):
+        log_security_event(
+            event="login_attempt",
+            status="failed",
+            user_id=user['id'],
+            ip=http_request.client.host if http_request.client else None,
+            metadata={"email": request.email, "reason": "bad_password"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
@@ -116,6 +139,13 @@ async def login(request: LoginRequest, response: Response):
     # Check 2FA if enabled
     if user.get('has_2fa'):
         if not request.totp_code:
+            log_security_event(
+                event="login_attempt",
+                status="failed",
+                user_id=user['id'],
+                ip=http_request.client.host if http_request.client else None,
+                metadata={"email": request.email, "reason": "missing_2fa"},
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="2FA code required"
@@ -123,6 +153,13 @@ async def login(request: LoginRequest, response: Response):
 
         is_valid = await tfa.verify_totp(user['id'], request.totp_code)
         if not is_valid:
+            log_security_event(
+                event="login_attempt",
+                status="failed",
+                user_id=user['id'],
+                ip=http_request.client.host if http_request.client else None,
+                metadata={"email": request.email, "reason": "invalid_2fa"},
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid 2FA code"
@@ -136,12 +173,21 @@ async def login(request: LoginRequest, response: Response):
 
     # Set secure cookie
     response.set_cookie(
-        key="access_token",
+        key="auth_token",
         value=access_token,
         httponly=True,
         secure=True,
-        samesite="lax",
-        max_age=86400  # 24 hours
+        samesite="strict",  # Changed from "lax" to "strict" for maximum security
+        max_age=86400,
+        path="/"
+    )
+
+    log_security_event(
+        event="login_attempt",
+        status="success",
+        user_id=user['id'],
+        ip=http_request.client.host if http_request.client else None,
+        metadata={"email": request.email},
     )
 
     return AuthResponse(
@@ -150,9 +196,16 @@ async def login(request: LoginRequest, response: Response):
     )
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(response: Response, http_request: Request, current_user: dict = Depends(get_current_user)):
     """Logout user"""
-    response.delete_cookie(key="access_token")
+    response.delete_cookie(key="auth_token", path="/")
+    log_security_event(
+        event="logout",
+        status="success",
+        user_id=current_user['id'],
+        ip=http_request.client.host if http_request.client else None,
+        metadata={}
+    )
     return {"message": "Successfully logged out"}
 
 @router.get("/me", response_model=UserInfo)
@@ -176,7 +229,10 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 @router.get("/csrf-token")
 async def get_csrf_token(request: Request):
     """Get CSRF token for forms"""
-    token = csrf.generate_token(request)
+    user = None
+    if request.state and getattr(request.state, "user", None):
+        user = request.state.user.get("id")
+    token = csrf.generate_token(user_id=str(user) if user else None)
     return {"csrf_token": token}
 
 # 2FA endpoints

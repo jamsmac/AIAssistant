@@ -25,6 +25,7 @@ import io
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Initialize Sentry for error tracking
 SENTRY_DSN = os.getenv("SENTRY_DSN")
@@ -53,10 +54,14 @@ from rate_limiter import get_rate_limiter
 from csrf_protection import get_csrf_protection
 from oauth_providers import oauth_manager
 from two_factor_auth import TwoFactorAuth
-from monitoring import metrics_collector, alert_manager, request_monitor, system_monitor, AlertSeverity
+from agents.monitoring import metrics_collector, alert_manager, request_monitor, system_monitor, AlertSeverity
+from agents.db_pool import db_pool
+from agents.cache_manager import get_cache_manager
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
+
+cache_scheduler: Optional[AsyncIOScheduler] = None
 
 # Инициализация FastAPI
 app = FastAPI(
@@ -75,21 +80,94 @@ DEFAULT_ORIGINS = [
     "http://localhost:5173",  # Vite dev server
 ]
 
-# Получаем production домены из env переменной
-CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "")
-if CORS_ORIGINS_ENV:
-    # Разделяем по запятой и очищаем пробелы
-    production_origins = [origin.strip() for origin in CORS_ORIGINS_ENV.split(",") if origin.strip()]
+def validate_origin(origin: str) -> bool:
+    """
+    Валидирует origin на соответствие security best practices.
+    
+    Args:
+        origin: Origin URL для валидации
+        
+    Returns:
+        True если origin валиден, False иначе
+    """
+    if not origin or not isinstance(origin, str):
+        return False
+    
+    # Проверяем формат URL
+    if not (origin.startswith("http://") or origin.startswith("https://")):
+        return False
+    
+    # В production запрещаем http:// (только https://)
+    environment = os.getenv("ENVIRONMENT", "development").lower()
+    if environment == "production" and origin.startswith("http://"):
+        # Разрешаем только localhost в production для тестирования
+        if "localhost" not in origin:
+            logger.warning(f"Rejected insecure HTTP origin in production: {origin}")
+            return False
+    
+    # Проверяем на опасные паттерны
+    dangerous_patterns = ["<", ">", "'", '"', "javascript:", "data:", "vbscript:"]
+    for pattern in dangerous_patterns:
+        if pattern in origin.lower():
+            logger.warning(f"Rejected origin with dangerous pattern '{pattern}': {origin}")
+            return False
+    
+    return True
+
+def setup_cors_middleware():
+    """
+    Настраивает CORS middleware с безопасной конфигурацией.
+    
+    Returns:
+        Список разрешенных origins
+    """
+    # Получаем production домены из env переменной
+    CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "")
+    production_origins = []
+    
+    if CORS_ORIGINS_ENV:
+        # Разделяем по запятой и очищаем пробелы
+        raw_origins = [origin.strip() for origin in CORS_ORIGINS_ENV.split(",") if origin.strip()]
+        
+        # Валидируем каждый origin
+        for origin in raw_origins:
+            if validate_origin(origin):
+                production_origins.append(origin)
+                logger.info(f"Added CORS origin: {origin}")
+            else:
+                logger.warning(f"Rejected invalid CORS origin: {origin}")
+    
+    # Объединяем default и production origins
     ALLOWED_ORIGINS = DEFAULT_ORIGINS + production_origins
-else:
-    ALLOWED_ORIGINS = DEFAULT_ORIGINS
+    
+    # Логируем финальную конфигурацию
+    logger.info(f"CORS configured with {len(ALLOWED_ORIGINS)} allowed origins")
+    if os.getenv("ENVIRONMENT", "development").lower() == "production":
+        logger.info(f"Production origins: {production_origins}")
+    
+    return ALLOWED_ORIGINS
+
+ALLOWED_ORIGINS = setup_cors_middleware()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-CSRF-Token",
+        "X-Request-ID"
+    ],
+    expose_headers=[
+        "Content-Length",
+        "X-Request-ID",
+        "X-Response-Time",
+        "X-API-Version"
+    ],
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 # Gzip compression middleware для улучшения производительности
@@ -267,6 +345,102 @@ try:
 except ImportError as e:
     logger.warning(f"Could not load Documentation Analyzer router: {e}")
 
+# Import and include Auth router
+try:
+    from api.routers import auth_router
+    app.include_router(auth_router.router)
+    logger.info("Auth router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Auth router: {e}")
+
+# Import and include Dashboard router
+try:
+    from api.routers import dashboard_router
+    app.include_router(dashboard_router.router)
+    logger.info("Dashboard router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Dashboard router: {e}")
+
+# Import and include Integrations router
+try:
+    from api.routers import integrations_router
+    app.include_router(integrations_router.router)
+    logger.info("Integrations router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Integrations router: {e}")
+
+# Import and include Projects router
+try:
+    from api.routers import projects_router
+    app.include_router(projects_router.router)
+    logger.info("Projects router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Projects router: {e}")
+
+# Import and include Workflows router
+try:
+    from api.routers import workflows_router
+    app.include_router(workflows_router.router)
+    logger.info("Workflows router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Workflows router: {e}")
+
+# Import and include Models router
+try:
+    from api.routers import models_router
+    app.include_router(models_router.router)
+    logger.info("Models router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Models router: {e}")
+
+# Import and include Rankings router
+try:
+    from api.routers import rankings_router
+    app.include_router(rankings_router.router)
+    logger.info("Rankings router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Rankings router: {e}")
+
+# Import and include Monitoring router
+try:
+    from api.routers import monitoring_router
+    app.include_router(monitoring_router.router)
+    logger.info("Monitoring router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Monitoring router: {e}")
+
+# Import and include History router
+try:
+    from api.routers import history_router
+    app.include_router(history_router.router)
+    logger.info("History router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load History router: {e}")
+
+# Import and include Users router
+try:
+    from api.routers import users_router
+    app.include_router(users_router.router)
+    logger.info("Users router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Users router: {e}")
+
+# Import and include Fractal API router
+try:
+    from api.routers import fractal_api
+    app.include_router(fractal_api.router)
+    logger.info("Fractal API router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Fractal API router: {e}")
+
+# Import and include Blog API router
+try:
+    from api.routers import blog_api
+    app.include_router(blog_api.router)
+    logger.info("Blog API router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Could not load Blog API router: {e}")
+
 # ============================================
 # Startup and Shutdown Events
 # ============================================
@@ -274,7 +448,76 @@ except ImportError as e:
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
+    # Validate security configuration
+    from agents.auth import validate_secret_key
+    environment = os.getenv("ENVIRONMENT", "development").lower()
+    is_production = environment == "production"
+    
+    secret_key = os.getenv("SECRET_KEY")
+    if secret_key:
+        is_valid, error_message = validate_secret_key(secret_key, is_production)
+        if not is_valid:
+            if is_production:
+                logger.error(f"SECRET_KEY validation failed: {error_message}")
+                raise ValueError(f"Invalid SECRET_KEY: {error_message}")
+            else:
+                logger.warning(f"SECRET_KEY validation warning: {error_message}")
+        else:
+            logger.info("SECRET_KEY validated successfully")
+    else:
+        logger.error("SECRET_KEY is not set. Generate one with: python scripts/generate_secret_key.py")
+        if is_production:
+            raise ValueError("SECRET_KEY must be set in production environment")
     logger.info("Starting AI Development System API")
+
+    # Initialize PostgreSQL connection pool if available
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        try:
+            pool_min_size = int(os.getenv("DB_POOL_MIN_SIZE", "10"))
+            pool_max_size = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
+            pool_max_queries = int(os.getenv("DB_POOL_MAX_QUERIES", "50000"))
+            max_idle_lifetime = float(os.getenv("DB_POOL_MAX_IDLE_SECONDS", "300"))
+
+            await db_pool.initialize(
+                dsn=database_url,
+                min_size=pool_min_size,
+                max_size=pool_max_size,
+                max_queries=pool_max_queries,
+                max_inactive_connection_lifetime=max_idle_lifetime,
+            )
+            logger.info(
+                "Database connection pool initialized (min_size=%s, max_size=%s)",
+                pool_min_size,
+                pool_max_size,
+            )
+        except Exception as exc:
+            logger.error("Failed to initialize database pool: %s", exc, exc_info=True)
+            if is_production:
+                raise
+    else:
+        logger.warning("DATABASE_URL is not set. Skipping PostgreSQL pool initialization")
+
+    # Schedule periodic cache cleanup
+    try:
+        cache_manager = get_cache_manager()
+        global cache_scheduler
+        if cache_scheduler is None:
+            cache_scheduler = AsyncIOScheduler()
+            cache_scheduler.add_job(
+                cache_manager.cleanup_expired,
+                "interval",
+                hours=int(os.getenv("CACHE_CLEANUP_INTERVAL_HOURS", "6")),
+                id="cache_cleanup",
+                max_instances=1,
+                replace_existing=True,
+            )
+            cache_scheduler.start()
+            logger.info("Cache cleanup scheduler started")
+    except Exception as exc:
+        logger.error("Failed to start cache cleanup scheduler: %s", exc, exc_info=True)
+        if is_production:
+            raise
 
     # Start workflow scheduler for scheduled triggers
     try:
@@ -291,7 +534,7 @@ async def startup_event():
 
     # Initialize alert channels if configured
     if os.getenv("SMTP_HOST"):
-        from monitoring import EmailNotificationChannel
+        from agents.monitoring import EmailNotificationChannel
         email_channel = EmailNotificationChannel(
             smtp_host=os.getenv("SMTP_HOST"),
             smtp_port=int(os.getenv("SMTP_PORT", 587)),
@@ -302,7 +545,7 @@ async def startup_event():
         alert_manager.add_notification_channel(email_channel)
 
     if os.getenv("WEBHOOK_URL"):
-        from monitoring import WebhookNotificationChannel
+        from agents.monitoring import WebhookNotificationChannel
         webhook_channel = WebhookNotificationChannel(os.getenv("WEBHOOK_URL"))
         alert_manager.add_notification_channel(webhook_channel)
 
@@ -320,6 +563,21 @@ async def shutdown_event():
         logger.info("Workflow scheduler stopped")
     except Exception as e:
         logger.error(f"Error stopping workflow scheduler: {e}")
+
+    try:
+        await db_pool.close()
+    except Exception as exc:
+        logger.error("Error while closing database pool: %s", exc, exc_info=True)
+
+    global cache_scheduler
+    if cache_scheduler is not None:
+        try:
+            cache_scheduler.shutdown(wait=False)
+            logger.info("Cache cleanup scheduler stopped")
+        except Exception as exc:
+            logger.error("Error while stopping cache scheduler: %s", exc, exc_info=True)
+        finally:
+            cache_scheduler = None
 
     system_monitor.stop()
 
@@ -1470,21 +1728,37 @@ async def refresh_token(authorization: str = Header(None)):
 
 
 @app.get("/api/auth/me", response_model=UserInfo)
-async def get_current_user(authorization: str = Header(None)):
+async def get_current_user(
+    request: Request,
+    authorization: str = Header(None)
+):
     """
     Получить информацию о текущем пользователе (protected endpoint)
+    
+    Reads token from:
+    1. Authorization header (Bearer token) - for API clients
+    2. Cookie (auth_token) - for web browsers (preferred)
 
     Headers:
-    - Authorization: Bearer {token}
+    - Authorization: Bearer {token} (optional if cookie is present)
 
     Returns:
     - Информация о пользователе
     """
     try:
-        if not authorization or not authorization.startswith("Bearer "):
+        token = None
+        
+        # Try to get token from Authorization header first (for API clients)
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.replace("Bearer ", "")
+        
+        # Fallback to cookie if no header token (for web browsers)
+        if not token:
+            token = request.cookies.get("auth_token")
+        
+        if not token:
             raise HTTPException(status_code=401, detail="Missing or invalid token")
 
-        token = authorization.replace("Bearer ", "")
         payload = verify_jwt(token)
 
         if not payload:
@@ -2142,9 +2416,16 @@ def validate_record_data(data: Dict[str, Any], schema: DatabaseSchema) -> None:
 # JWT Middleware Helper
 # ============================================
 
-def get_current_user_from_token(authorization: str = Header(None)) -> Dict:
+def get_current_user_from_token(
+    request: Request,
+    authorization: str = Header(None)
+) -> Dict:
     """
     Dependency для получения текущего пользователя из JWT токена
+    
+    Reads token from:
+    1. Authorization header (Bearer token) - for API clients
+    2. Cookie (auth_token) - for web browsers (preferred)
 
     Usage:
     ```python
@@ -2153,10 +2434,19 @@ def get_current_user_from_token(authorization: str = Header(None)) -> Dict:
         return {"message": f"Hello {current_user['email']}!"}
     ```
     """
-    if not authorization or not authorization.startswith("Bearer "):
+    token = None
+    
+    # Try to get token from Authorization header first (for API clients)
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+    
+    # Fallback to cookie if no header token (for web browsers)
+    if not token:
+        token = request.cookies.get("auth_token")
+    
+    if not token:
         raise HTTPException(status_code=401, detail="Missing token")
 
-    token = authorization.replace("Bearer ", "")
     payload = verify_jwt(token)
 
     if not payload:

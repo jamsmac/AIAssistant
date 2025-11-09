@@ -45,13 +45,15 @@ export class APIClient {
   }
 
   /**
-   * Get authentication token from localStorage (for backward compatibility)
-   * New auth uses httpOnly cookies instead
+   * Authentication is now handled via httpOnly cookies.
+   * No need to manually manage tokens in localStorage.
+   * Cookies are automatically sent with requests when credentials: 'include' is set.
    */
   private getToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    // Still check localStorage for backward compatibility
-    return localStorage.getItem('token');
+    // Tokens are now stored in httpOnly cookies, not localStorage
+    // This method is kept for backward compatibility but returns null
+    // The backend will read the token from cookies automatically
+    return null;
   }
 
   /**
@@ -89,13 +91,9 @@ export class APIClient {
       'Content-Type': 'application/json',
     };
 
-    // Add auth token if available (for backward compatibility)
-    if (includeAuth) {
-      const token = this.getToken();
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-    }
+    // Auth is handled via httpOnly cookies (credentials: 'include' in fetch)
+    // Only add Authorization header if explicitly needed for API clients
+    // Web browsers should rely on cookies for security
 
     // Add CSRF token for mutations
     if (includeCsrf) {
@@ -120,7 +118,9 @@ export class APIClient {
     }
 
     // Handle 401 - redirect to login
+    // Cookie will be cleared by backend on logout
     if (status === 401 && typeof window !== 'undefined') {
+      // Clear any remaining localStorage tokens (backward compatibility)
       localStorage.removeItem('token');
       setTimeout(() => {
         window.location.href = '/login';

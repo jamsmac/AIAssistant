@@ -1,30 +1,31 @@
 'use client';
 
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { WorkflowResult } from '@/types/workflows';
 import { Plus, Search, Filter, Loader2 } from 'lucide-react';
-import { useApi } from '@/lib/useApi';
 import { useToast } from '@/components/ui/Toast';
-import { API_URL } from '@/lib/config';
+import useApi from '@/lib/useApi';
 
 // Lazy load components
 const WorkflowCard = lazy(() => import('@/components/workflows/WorkflowCard'));
-const WorkflowForm = lazy(() => import('@/components/workflows/WorkflowForm'));
 const WorkflowExecutionModal = lazy(() => import('@/components/workflows/WorkflowExecutionModal'));
+const WorkflowBuilderModal = lazy(() =>
+  import('@/components/workflows/WorkflowBuilderModal').then(mod => ({ default: mod.WorkflowBuilderModal })),
+);
 
 // Types
-interface WorkflowTrigger {
-  type: 'manual' | 'schedule' | 'webhook' | 'email_received' | 'record_created';
-  config: Record<string, any>;
-}
-
-interface WorkflowAction {
+type WorkflowTrigger = {
   type: string;
-  config: Record<string, any>;
-}
+  config: Record<string, unknown>;
+};
 
-interface Workflow {
+type WorkflowAction = {
+  type: string;
+  config: Record<string, unknown>;
+};
+
+type Workflow = {
   id: number;
   user_id: number;
   name: string;
@@ -33,7 +34,7 @@ interface Workflow {
   enabled: boolean;
   created_at: string;
   last_execution?: string;
-}
+};
 
 interface Execution {
   id: number;
@@ -54,154 +55,136 @@ const LoadingSpinner = () => (
 export default function WorkflowsPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const api = useApi();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Modals
-  const [showNewModal, setShowNewModal] = useState(false);
+  const [showBuilderModal, setShowBuilderModal] = useState(false);
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [showExecutionModal, setShowExecutionModal] = useState(false);
   const [selectedExecution, setSelectedExecution] = useState<Execution | null>(null);
 
-  // State
-  const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [executions, setExecutions] = useState<Record<number, Execution[]>>({});
   const [executing, setExecuting] = useState<number | null>(null);
-  const [creating, setCreating] = useState(false);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'enabled' | 'disabled'>('all');
 
-  // New workflow form state
-  const [formName, setFormName] = useState('');
-  const [formTrigger, setFormTrigger] = useState<WorkflowTrigger>({
-    type: 'manual',
-    config: {}
-  });
-  const [formActions, setFormActions] = useState<WorkflowAction[]>([
-    { type: 'send_notification', config: {} }
-  ]);
-  const [formEnabled, setFormEnabled] = useState(true);
-
-  useEffect(() => {
-    fetchWorkflows();
-  }, []);
-
-  const fetchWorkflows = async () => {
+  const fetchWorkflows = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/workflows`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch workflows');
-      }
-      const data = await response.json();
+      const data = await api.get<{ workflows?: Workflow[] }>(`/api/workflows`);
       setWorkflows(data.workflows || []);
-    } catch (error) {
-      console.error('Error fetching workflows:', error);
+    } catch (err) {
+      console.error('Error fetching workflows:', err);
       setError('Failed to load workflows');
       showToast('Failed to load workflows', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [api, showToast]);
 
-  const fetchExecutions = async (workflowId: number) => {
-    try {
-      const response = await fetch(`${API_URL}/api/workflows/${workflowId}/executions`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch executions');
+  useEffect(() => {
+    fetchWorkflows();
+  }, [fetchWorkflows]);
+
+  const fetchExecutions = useCallback(
+    async (workflowId: number) => {
+      try {
+        const data = await api.get<{ executions?: Execution[] }>(`/api/workflows/${workflowId}/executions`);
+        setExecutions(prev => ({
+          ...prev,
+          [workflowId]: data.executions || [],
+        }));
+      } catch (err) {
+        console.error('Error fetching executions:', err);
+        showToast('Failed to load execution history', 'error');
       }
-      const data = await response.json();
-      setExecutions(prev => ({
-        ...prev,
-        [workflowId]: data.executions || []
-      }));
-    } catch (error) {
-      console.error('Error fetching executions:', error);
-      showToast('Failed to load execution history', 'error');
-    }
-  };
+    },
+    [api, showToast],
+  );
 
-  const createWorkflow = async () => {
-    if (!formName.trim()) {
-      showToast('Please enter a workflow name', 'error');
+  const handleBuilderSave = async ({
+    name,
+    description,
+    enabled,
+    builder,
+  }: {
+    name: string;
+    description?: string;
+    enabled: boolean;
+    builder: {
+      trigger?: WorkflowTrigger;
+      actions: WorkflowAction[];
+      layout: { nodes: any[]; edges: any[] };
+    };
+  }) => {
+    if (!builder.trigger) {
+      showToast('Add and configure a trigger before saving', 'error');
+      return;
+    }
+    if (builder.actions.length === 0) {
+      showToast('Add at least one action before saving', 'error');
       return;
     }
 
-    setCreating(true);
+    setSavingWorkflow(true);
     try {
-      const response = await fetch(`${API_URL}/api/workflows`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: formName,
-          trigger: formTrigger,
-          actions: formActions,
-          enabled: formEnabled
-        })
+      await api.post(`/api/workflows`, {
+        name,
+        description,
+        enabled,
+        trigger: builder.trigger,
+        actions: builder.actions,
+        layout: builder.layout,
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to create workflow');
-      }
-
-      const data = await response.json();
       showToast('Workflow created successfully', 'success');
-      setShowNewModal(false);
-      resetForm();
+      setShowBuilderModal(false);
       fetchWorkflows();
-    } catch (error) {
-      console.error('Error creating workflow:', error);
-      showToast(error instanceof Error ? error.message : 'Failed to create workflow', 'error');
+    } catch (err) {
+      console.error('Error creating workflow:', err);
+      showToast(err instanceof Error ? err.message : 'Failed to create workflow', 'error');
+      throw err;
     } finally {
-      setCreating(false);
+      setSavingWorkflow(false);
     }
   };
 
   const executeWorkflow = async (workflow: Workflow) => {
     setExecuting(workflow.id);
     try {
-      const response = await fetch(`${API_URL}/api/workflows/${workflow.id}/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await api.post<{ status?: string; result?: WorkflowResult | null; error?: string | null }>(
+        `/api/workflows/${workflow.id}/execute`,
+        {
           context: {
             manual_execution: true,
-            timestamp: new Date().toISOString()
-          }
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to execute workflow');
-      }
-
-      const data = await response.json();
+            timestamp: new Date().toISOString(),
+          },
+        },
+      );
       showToast('Workflow executed successfully', 'success');
 
-      // Create an execution record for display
       const execution: Execution = {
         id: Date.now(),
         workflow_id: workflow.id,
         status: data.status === 'completed' ? 'success' : 'failed',
-        result: data.result,
+        result: data.result || null,
         error: data.error,
-        executed_at: new Date().toISOString()
+        executed_at: new Date().toISOString(),
       };
 
       setSelectedExecution(execution);
       setShowExecutionModal(true);
-
-      // Refresh executions for this workflow
       fetchExecutions(workflow.id);
-    } catch (error) {
-      console.error('Error executing workflow:', error);
-      showToast(error instanceof Error ? error.message : 'Failed to execute workflow', 'error');
+    } catch (err) {
+      console.error('Error executing workflow:', err);
+      showToast(err instanceof Error ? err.message : 'Failed to execute workflow', 'error');
     } finally {
       setExecuting(null);
     }
@@ -211,41 +194,27 @@ export default function WorkflowsPage() {
     if (!confirm('Are you sure you want to delete this workflow?')) return;
 
     try {
-      const response = await fetch(`${API_URL}/api/workflows/${workflowId}`, {
-        method: 'DELETE'
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete workflow');
-      }
+      await api.delete(`/api/workflows/${workflowId}`);
 
       showToast('Workflow deleted successfully', 'success');
       fetchWorkflows();
-    } catch (error) {
-      console.error('Error deleting workflow:', error);
+    } catch (err) {
+      console.error('Error deleting workflow:', err);
       showToast('Failed to delete workflow', 'error');
     }
   };
 
   const toggleWorkflow = async (workflow: Workflow) => {
     try {
-      const response = await fetch(`${API_URL}/api/workflows/${workflow.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...workflow,
-          enabled: !workflow.enabled
-        })
+      await api.put(`/api/workflows/${workflow.id}`, {
+        ...workflow,
+        enabled: !workflow.enabled,
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to update workflow');
-      }
 
       showToast(`Workflow ${!workflow.enabled ? 'enabled' : 'disabled'}`, 'success');
       fetchWorkflows();
-    } catch (error) {
-      console.error('Error updating workflow:', error);
+    } catch (err) {
+      console.error('Error updating workflow:', err);
       showToast('Failed to update workflow', 'error');
     }
   };
@@ -261,14 +230,6 @@ export default function WorkflowsPage() {
     }
   };
 
-  const resetForm = () => {
-    setFormName('');
-    setFormTrigger({ type: 'manual', config: {} });
-    setFormActions([{ type: 'send_notification', config: {} }]);
-    setFormEnabled(true);
-  };
-
-  // Filter workflows
   const filteredWorkflows = workflows.filter(workflow => {
     const matchesSearch = workflow.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus =
@@ -304,7 +265,7 @@ export default function WorkflowsPage() {
               type="text"
               placeholder="Search workflows..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={event => setSearchQuery(event.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -314,7 +275,7 @@ export default function WorkflowsPage() {
             <Filter className="w-5 h-5 text-gray-400" />
             <select
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as 'all' | 'enabled' | 'disabled')}
+              onChange={event => setFilterStatus(event.target.value as 'all' | 'enabled' | 'disabled')}
               className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Workflows</option>
@@ -325,7 +286,7 @@ export default function WorkflowsPage() {
 
           {/* New Workflow Button */}
           <button
-            onClick={() => setShowNewModal(true)}
+            onClick={() => setShowBuilderModal(true)}
             className="px-6 py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg text-white font-medium flex items-center gap-2 transition"
           >
             <Plus className="w-5 h-5" />
@@ -349,7 +310,7 @@ export default function WorkflowsPage() {
             </p>
             {!searchQuery && (
               <button
-                onClick={() => setShowNewModal(true)}
+                onClick={() => setShowBuilderModal(true)}
                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-medium inline-flex items-center gap-2"
               >
                 <Plus className="w-5 h-5" />
@@ -370,12 +331,11 @@ export default function WorkflowsPage() {
                   onToggleExpand={() => toggleExpanded(workflow.id)}
                   onExecute={() => executeWorkflow(workflow)}
                   onEdit={() => {
-                    // TODO: Implement edit functionality
                     showToast('Edit functionality coming soon', 'info');
                   }}
                   onDelete={() => deleteWorkflow(workflow.id)}
                   onToggleEnabled={() => toggleWorkflow(workflow)}
-                  onViewDetails={(execution) => {
+                  onViewDetails={execution => {
                     setSelectedExecution(execution);
                     setShowExecutionModal(true);
                   }}
@@ -384,48 +344,34 @@ export default function WorkflowsPage() {
             </Suspense>
           </div>
         )}
+      </div>
 
-        {/* New Workflow Modal */}
-        {showNewModal && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-            <div className="bg-gray-900 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="p-6">
-                <Suspense fallback={<LoadingSpinner />}>
-                  <WorkflowForm
-                    name={formName}
-                    trigger={formTrigger}
-                    actions={formActions}
-                    enabled={formEnabled}
-                    isSubmitting={creating}
-                    onNameChange={setFormName}
-                    onTriggerChange={setFormTrigger}
-                    onActionsChange={setFormActions}
-                    onEnabledChange={setFormEnabled}
-                    onSubmit={createWorkflow}
-                    onCancel={() => {
-                      setShowNewModal(false);
-                      resetForm();
-                    }}
-                  />
-                </Suspense>
-              </div>
+      <Suspense fallback={<LoadingSpinner />}>
+        <WorkflowBuilderModal
+          open={showBuilderModal}
+          onClose={() => setShowBuilderModal(false)}
+          onSave={handleBuilderSave}
+          isSaving={savingWorkflow}
+        />
+      </Suspense>
+
+      {showExecutionModal && selectedExecution && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+          <div className="bg-gray-900 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <Suspense fallback={<LoadingSpinner />}>
+                <WorkflowExecutionModal
+                  execution={selectedExecution}
+                  onClose={() => {
+                    setShowExecutionModal(false);
+                    setSelectedExecution(null);
+                  }}
+                />
+              </Suspense>
             </div>
           </div>
-        )}
-
-        {/* Execution Modal */}
-        {showExecutionModal && (
-          <Suspense fallback={<LoadingSpinner />}>
-            <WorkflowExecutionModal
-              execution={selectedExecution}
-              onClose={() => {
-                setShowExecutionModal(false);
-                setSelectedExecution(null);
-              }}
-            />
-          </Suspense>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

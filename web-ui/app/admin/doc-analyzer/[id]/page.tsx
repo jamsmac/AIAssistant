@@ -38,6 +38,7 @@ export default function DocumentAnalysisResults() {
   const [error, setError] = useState('');
   const [selectedTab, setSelectedTab] = useState<'summary' | 'endpoints' | 'schemas'>('summary');
   const [copiedSql, setCopiedSql] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     fetchAnalysis();
@@ -67,6 +68,38 @@ export default function DocumentAnalysisResults() {
       setTimeout(() => setCopiedSql(null), 2000);
     } catch (err) {
       alert('Failed to copy to clipboard');
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/doc-analyzer/documents/${docId}/export/sheets`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        throw new Error('Export failed');
+      }
+
+      const result = await res.json();
+
+      if (result.success && result.sheet_url) {
+        // Successfully created Google Sheet
+        window.open(result.sheet_url, '_blank');
+        alert('✅ Successfully exported to Google Sheets!');
+      } else if (result.formatted_data) {
+        // Fallback mode - no credentials configured
+        alert('ℹ️ ' + (result.message || 'Export data prepared. Google Sheets credentials not configured.'));
+        console.log('Export data:', result.formatted_data);
+      } else {
+        alert('⚠️ ' + (result.message || 'Export completed with warnings'));
+      }
+    } catch (err: any) {
+      alert('❌ Export failed: ' + (err.message || 'Unknown error'));
+      console.error('Export error:', err);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -119,12 +152,31 @@ export default function DocumentAnalysisResults() {
                 {analysis.endpoint_count} endpoints · {analysis.schema_count} schemas
               </p>
             </div>
-            <Link
-              href="/admin/doc-analyzer"
-              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg"
-            >
-              ← Back to Dashboard
-            </Link>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleExport}
+                disabled={exporting}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+              >
+                {exporting ? (
+                  <>
+                    <span className="animate-spin">⏳</span>
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <span>📤</span>
+                    Export to Sheets
+                  </>
+                )}
+              </button>
+              <Link
+                href="/admin/doc-analyzer"
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors"
+              >
+                ← Back to Dashboard
+              </Link>
+            </div>
           </div>
         </div>
       </div>

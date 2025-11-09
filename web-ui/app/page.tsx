@@ -81,15 +81,10 @@ export default function Dashboard() {
 
   const fetchDashboardData = async () => {
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        window.location.href = '/login';
-        return;
-      }
-
+      // Auth token now comes from httpOnly cookies
       // Fetch stats
       const statsRes = await fetch(`${API_URL}/api/dashboard/stats`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        credentials: 'include'
       });
       if (statsRes.ok) {
         const statsData = await statsRes.json();
@@ -141,11 +136,11 @@ export default function Dashboard() {
     if (!newProjectName.trim()) return;
 
     try {
-      const token = localStorage.getItem('token');
+      // Auth token now comes from httpOnly cookies
       const response = await fetch(`${API_URL}/api/projects`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

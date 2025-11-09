@@ -7,19 +7,10 @@ import Link from 'next/link';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('access_token');
-}
-
+// Auth token now comes from httpOnly cookies automatically
 async function fetchWithAuth(url: string) {
-  const token = getAuthToken();
-  if (!token) throw new Error('Not authenticated');
-
   const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
+    credentials: 'include', // Include httpOnly cookies
   });
 
   if (!response.ok) {

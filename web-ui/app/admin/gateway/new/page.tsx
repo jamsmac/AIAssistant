@@ -18,14 +18,14 @@ export default function NewConnectionPage() {
   const [name, setName] = useState('');
   const [type, setType] = useState('rest');
   const [description, setDescription] = useState('');
-  const [config, setConfig] = useState({
+  const [config, setConfig] = useState<any>({
     base_url: '',
     endpoint: '',
     method: 'GET',
     timeout: 30,
     retry_count: 3
   });
-  const [credentials, setCredentials] = useState({
+  const [credentials, setCredentials] = useState<any>({
     auth_type: 'bearer',
     token: '',
     key_name: 'X-API-Key',
@@ -36,11 +36,11 @@ export default function NewConnectionPage() {
   const [saving, setSaving] = useState(false);
 
   const handleConfigChange = (key: string, value: any) => {
-    setConfig(prev => ({ ...prev, [key]: value }));
+    setConfig((prev: any) => ({ ...prev, [key]: value }));
   };
 
   const handleCredentialChange = (key: string, value: any) => {
-    setCredentials(prev => ({ ...prev, [key]: value }));
+    setCredentials((prev: any) => ({ ...prev, [key]: value }));
   };
 
   const handleSave = async () => {

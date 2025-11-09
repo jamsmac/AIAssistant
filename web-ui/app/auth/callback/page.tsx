@@ -67,11 +67,9 @@ export default function OAuthCallbackPage() {
       sessionStorage.removeItem('oauth_state');
       sessionStorage.removeItem('oauth_provider');
 
-      // Store auth data
-      if (data.access_token) {
-        localStorage.setItem('token', data.access_token);
-      }
-
+      // Auth token is now stored in httpOnly cookie by the server
+      // No need to store in localStorage (security improvement)
+      // User data can still be stored in localStorage as it's not sensitive
       if (data.user) {
         localStorage.setItem('user', JSON.stringify(data.user));
       }

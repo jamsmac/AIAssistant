@@ -148,9 +148,16 @@ class OpenAPIAnalyzer(BaseAnalyzer):
         return parsed_responses
 
     async def _parse_schemas(self) -> Dict[str, Any]:
-        """Extract data schemas/models"""
+        """Extract data schemas/models from OpenAPI 3.x or Swagger 2.0"""
+        # Check for OpenAPI 3.x format (components.schemas)
         components = self.spec.get('components', {})
         schemas = components.get('schemas', {})
+
+        # If no schemas found, check for Swagger 2.0 format (definitions)
+        if not schemas:
+            schemas = self.spec.get('definitions', {})
+            if schemas:
+                logger.info(f"Found {len(schemas)} schemas in Swagger 2.0 'definitions' section")
 
         parsed_schemas = {}
 
@@ -229,7 +236,11 @@ class OpenAPIAnalyzer(BaseAnalyzer):
             return {}
 
         paths = self.spec.get('paths', {})
+
+        # Check for OpenAPI 3.x schemas or Swagger 2.0 definitions
         schemas = self.spec.get('components', {}).get('schemas', {})
+        if not schemas:
+            schemas = self.spec.get('definitions', {})
 
         # Count endpoints by method
         method_counts = {}
@@ -241,10 +252,14 @@ class OpenAPIAnalyzer(BaseAnalyzer):
                     method_counts[method.upper()] = method_counts.get(method.upper(), 0) + 1
                     total_endpoints += 1
 
+        # Detect spec version
+        spec_version = self.spec.get('openapi') or self.spec.get('swagger', 'unknown')
+
         return {
             'total_endpoints': total_endpoints,
             'total_schemas': len(schemas),
             'methods': method_counts,
             'api_version': self.spec.get('info', {}).get('version', 'unknown'),
-            'api_title': self.spec.get('info', {}).get('title', 'Unknown API')
+            'api_title': self.spec.get('info', {}).get('title', 'Unknown API'),
+            'spec_version': spec_version
         }
