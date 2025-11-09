@@ -17,7 +17,7 @@ supabase==2.9.0
 psycopg2-binary==2.9.10
 asyncpg==0.29.0
 redis==5.2.0
-sqlalchemy==1.4,<2.1
+sqlalchemy>=1.4,<2.1
 
 # Web Framework
 fastapi==0.115.4
@@ -30,7 +30,7 @@ mcp[cli]>=1.20.0
 
 # Utilities
 httpx>=0.23.0,<0.28  # Compatible with anthropic, openai, supabase, telegram-bot
-aiohttp==3.11.2
+aiohttp>=3.9.0,<4.0.0  # Compatible with langchain
 tenacity==9.0.0
 python-dotenv==1.0.1
 rich==13.9.4
@@ -83,4 +83,3 @@ APScheduler==3.10.4  # Background task scheduler for workflows
 
 # Communication Integrations
 python-telegram-bot>=21.0  # Telegram bot integration (21.0+ compatible with httpx>=0.26)
-aiogram==3.3.0  # Alternative async Telegram library
