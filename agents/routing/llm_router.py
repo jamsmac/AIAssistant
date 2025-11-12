@@ -5,8 +5,9 @@ Achieves 77% cost reduction through smart routing
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List, Any
 from .complexity_analyzer import ComplexityAnalyzer, ComplexityLevel
+from agents.llm import LLMManager
 
 logger = logging.getLogger(__name__)
 
@@ -75,15 +76,23 @@ class LLMRouter:
         ComplexityLevel.EXPERT: ['gpt-4', 'opus']
     }
     
-    def __init__(self, prefer_cost_efficiency: bool = True):
+    def __init__(self, prefer_cost_efficiency: bool = True, llm_manager: Optional[LLMManager] = None):
         """
         Initialize LLM Router
         
         Args:
             prefer_cost_efficiency: Prioritize cost over capability when possible
+            llm_manager: LLM Manager instance (creates new if not provided)
         """
         self.complexity_analyzer = ComplexityAnalyzer()
         self.prefer_cost_efficiency = prefer_cost_efficiency
+        
+        # Initialize LLM Manager
+        try:
+            self.llm_manager = llm_manager or LLMManager()
+        except ValueError:
+            logger.warning("No LLM API keys configured. Router will work in analysis-only mode.")
+            self.llm_manager = None
         
         # Statistics
         self.stats = {
@@ -305,20 +314,119 @@ class LLMRouter:
         info['costs'] = self.MODEL_COSTS.get(model, {})
         
         return info
+    
+    async def execute(
+        self,
+        task_description: str,
+        messages: Optional[List[Dict[str, str]]] = None,
+        preferences: Optional[Dict] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Execute task with intelligent routing and real LLM API call
+        
+        Args:
+            task_description: Task description for complexity analysis
+            messages: Chat messages (if None, creates from task_description)
+            preferences: Optional user preferences
+            **kwargs: Additional parameters for LLM API
+            
+        Returns:
+            Response dict with content, routing info, usage, and cost
+            
+        Raises:
+            ValueError: If LLM Manager not available
+        """
+        if not self.llm_manager:
+            raise ValueError("LLM Manager not available. Check API keys.")
+        
+        # Route task to select best model
+        model, complexity, routing_details = await self.route_task(
+            task_description,
+            preferences
+        )
+        
+        # Create messages if not provided
+        if messages is None:
+            messages = [{"role": "user", "content": task_description}]
+        
+        # Execute with LLM Manager
+        response = self.llm_manager.chat(
+            messages=messages,
+            model=model,
+            **kwargs
+        )
+        
+        # Add routing info to response
+        response['routing'] = routing_details
+        
+        # Update actual cost in stats
+        actual_cost = response.get('cost', 0)
+        gpt4_estimated = routing_details['estimated_cost'] + routing_details['cost_saved_vs_gpt4']
+        actual_saved = gpt4_estimated - actual_cost
+        self.stats['estimated_cost_saved'] = self.stats.get('estimated_cost_saved', 0) + actual_saved
+        
+        return response
+    
+    async def stream_execute(
+        self,
+        task_description: str,
+        messages: Optional[List[Dict[str, str]]] = None,
+        preferences: Optional[Dict] = None,
+        **kwargs
+    ):
+        """
+        Execute task with streaming response
+        
+        Args:
+            task_description: Task description
+            messages: Chat messages
+            preferences: Optional preferences
+            **kwargs: Additional parameters
+            
+        Yields:
+            Content chunks and final routing info
+        """
+        if not self.llm_manager:
+            raise ValueError("LLM Manager not available")
+        
+        # Route task
+        model, complexity, routing_details = await self.route_task(
+            task_description,
+            preferences
+        )
+        
+        # Create messages if not provided
+        if messages is None:
+            messages = [{"role": "user", "content": task_description}]
+        
+        # Stream from LLM Manager
+        for chunk in self.llm_manager.stream_chat(
+            messages=messages,
+            model=model,
+            **kwargs
+        ):
+            yield chunk
+        
+        # Yield routing info at the end
+        yield {"routing": routing_details}
 
 
 # Global LLM router instance
 _llm_router: Optional[LLMRouter] = None
 
 
-def get_llm_router() -> LLMRouter:
+def get_llm_router(llm_manager: Optional[LLMManager] = None) -> LLMRouter:
     """
     Get the global LLM router instance
+    
+    Args:
+        llm_manager: Optional LLM Manager instance
     
     Returns:
         LLM router instance
     """
     global _llm_router
     if _llm_router is None:
-        _llm_router = LLMRouter()
+        _llm_router = LLMRouter(llm_manager=llm_manager)
     return _llm_router
