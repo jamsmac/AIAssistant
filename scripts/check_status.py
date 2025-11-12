@@ -45,9 +45,8 @@ def main():
     print("📁 CORE FILES")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     checks.append(check_file("agents/database.py", "Database module"))
-    checks.append(check_file("agents/ai_router.py", "AI Router module"))
+    checks.append(check_file("agents/ai_router.py", "AI Router module (includes MODELS config)"))
     checks.append(check_file("agents/auth.py", "Auth module"))
-    checks.append(check_file("agents/models.py", "Models config"))
     checks.append(check_file("api/server.py", "FastAPI server"))
     print()
     

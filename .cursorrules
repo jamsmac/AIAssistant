@@ -37,7 +37,7 @@ Python/FastAPI backend + Next.js 16 frontend + MCP Integration
 
 ## Key Files
 - `agents/database.py` - HistoryDatabase class (SQLite ORM)
-- `agents/ai_router.py` - Smart model routing + caching
+- `agents/ai_router.py` - Smart model routing + caching (includes MODELS config)
 - `agents/auth.py` - JWT authentication
 - `agents/mcp_server.py` - **MCP server with 12 tools**
 - `agents/rate_limiter.py` - Three-tier rate limiting
