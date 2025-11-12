@@ -116,6 +116,8 @@ autopilot-core/
 
 ## 🚀 Quick Start
 
+> **📌 Для локальной разработки:** См. [LOCAL_DEVELOPMENT_GUIDE.md](LOCAL_DEVELOPMENT_GUIDE.md) - полное руководство по локальной установке и работе.
+
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
@@ -204,12 +206,24 @@ npm run dev
 
 ### First Time Setup
 
+**Быстрый запуск (рекомендуется):**
+```bash
+# Запуск backend и frontend одной командой
+./start_local.sh
+```
+
+**Или вручную:**
 1. **Start Backend**: `python api/server.py` (Terminal 1)
 2. **Start Frontend**: `cd web-ui && npm run dev` (Terminal 2)
 3. **Open Browser**: Navigate to http://localhost:3000
 4. **Register Account**: Click "Register" and create your first user
 5. **Login**: Use your credentials to access the dashboard
 6. **Create Project**: Start by creating your first project
+
+**Остановка:**
+```bash
+./stop_local.sh
+```
 
 ### 🔌 Optional: MCP Setup (Claude Desktop Integration)
 
