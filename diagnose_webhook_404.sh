@@ -94,3 +94,4 @@ echo "=== Next Steps ==="
 echo "1. If 404 persists: Check Railway logs for import errors"
 echo "2. If working: Update webhook URL in Stripe Dashboard"
 echo "3. Test with real payment to verify end-to-end flow"
+

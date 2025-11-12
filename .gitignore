@@ -54,9 +54,16 @@ START_HERE.md
 
 # Keep specific important docs
 !QUICK_START.md
+!QUICK_START_LOCAL.md
+!LOCAL_DEVELOPMENT_GUIDE.md
 !USER_GUIDE.md
 !API_DOCUMENTATION.md
 !AUTH_TESTING_GUIDE.md
 !DEPLOYMENT_GUIDE.md
 !docs/**/*.md
 !README.md
+
+# Keep local development scripts
+!start_local.sh
+!stop_local.sh
+!reset_local.sh
