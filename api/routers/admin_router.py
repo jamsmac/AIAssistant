@@ -13,6 +13,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from api.dependencies.database import get_db_connection
+from api.middleware.rbac import require_admin, require_superadmin, get_current_user, audit_log
 from agents.registry import PluginRegistry
 from agents.skills import SkillsRegistry
 from agents.routing import LLMRouter
@@ -133,7 +134,10 @@ class SystemSettings(BaseModel):
 # ============================================================================
 
 @router.get("/dashboard", response_model=DashboardStats)
-async def get_dashboard_stats(db = Depends(get_db_connection)):
+async def get_dashboard_stats(
+    db = Depends(get_db_connection),
+    current_user: dict = Depends(require_admin)
+):
     """Get dashboard statistics"""
     try:
         # Get user statistics
@@ -211,7 +215,7 @@ async def get_dashboard_stats(db = Depends(get_db_connection)):
 # ============================================================================
 
 @router.get("/plugins", response_model=List[PluginInfo])
-async def get_plugins():
+async def get_plugins(current_user: dict = Depends(require_admin)):
     """Get all registered plugins"""
     try:
         registry = PluginRegistry()
@@ -237,7 +241,11 @@ async def get_plugins():
 
 
 @router.post("/plugins")
-async def register_plugin(plugin: PluginInfo):
+@audit_log("register_plugin")
+async def register_plugin(
+    plugin: PluginInfo,
+    current_user: dict = Depends(require_admin)
+):
     """Register a new plugin"""
     try:
         registry = PluginRegistry()
@@ -259,7 +267,12 @@ async def register_plugin(plugin: PluginInfo):
 
 
 @router.put("/plugins/{plugin_name}/status")
-async def toggle_plugin_status(plugin_name: str, enabled: bool):
+@audit_log("toggle_plugin_status")
+async def toggle_plugin_status(
+    plugin_name: str,
+    enabled: bool,
+    current_user: dict = Depends(require_admin)
+):
     """Enable or disable a plugin"""
     try:
         registry = PluginRegistry()
@@ -270,7 +283,11 @@ async def toggle_plugin_status(plugin_name: str, enabled: bool):
 
 
 @router.delete("/plugins/{plugin_name}")
-async def delete_plugin(plugin_name: str):
+@audit_log("delete_plugin")
+async def delete_plugin(
+    plugin_name: str,
+    current_user: dict = Depends(require_superadmin)
+):
     """Delete a plugin"""
     try:
         registry = PluginRegistry()
@@ -285,7 +302,7 @@ async def delete_plugin(plugin_name: str):
 # ============================================================================
 
 @router.get("/llm-router/stats", response_model=RouterStats)
-async def get_router_stats():
+async def get_router_stats(current_user: dict = Depends(require_admin)):
     """Get LLM router statistics"""
     try:
         router_instance = LLMRouter()
@@ -306,7 +323,7 @@ async def get_router_stats():
 
 
 @router.get("/llm-router/models", response_model=List[ModelConfig])
-async def get_model_configs():
+async def get_model_configs(current_user: dict = Depends(require_admin)):
     """Get model configurations"""
     # TODO: Implement actual model config retrieval
     return [
@@ -332,7 +349,11 @@ async def get_model_configs():
 
 
 @router.put("/llm-router/models")
-async def update_model_configs(models: List[ModelConfig]):
+@audit_log("update_llm_models")
+async def update_model_configs(
+    models: List[ModelConfig],
+    current_user: dict = Depends(require_admin)
+):
     """Update model configurations"""
     # TODO: Implement actual model config update
     return {"message": "Model configurations updated"}
@@ -343,7 +364,7 @@ async def update_model_configs(models: List[ModelConfig]):
 # ============================================================================
 
 @router.get("/skills", response_model=List[SkillInfo])
-async def get_skills():
+async def get_skills(current_user: dict = Depends(require_admin)):
     """Get all skills"""
     try:
         registry = SkillsRegistry()
@@ -355,7 +376,11 @@ async def get_skills():
 
 
 @router.post("/skills")
-async def register_skill(skill: SkillInfo):
+@audit_log("register_skill")
+async def register_skill(
+    skill: SkillInfo,
+    current_user: dict = Depends(require_admin)
+):
     """Register a new skill"""
     try:
         registry = SkillsRegistry()
@@ -378,7 +403,11 @@ async def register_skill(skill: SkillInfo):
 
 
 @router.delete("/skills/{skill_name}")
-async def delete_skill(skill_name: str):
+@audit_log("delete_skill")
+async def delete_skill(
+    skill_name: str,
+    current_user: dict = Depends(require_admin)
+):
     """Delete a skill"""
     try:
         registry = SkillsRegistry()
@@ -393,7 +422,10 @@ async def delete_skill(skill_name: str):
 # ============================================================================
 
 @router.get("/users", response_model=List[UserInfo])
-async def get_users(db = Depends(get_db_connection)):
+async def get_users(
+    db = Depends(get_db_connection),
+    current_user: dict = Depends(require_admin)
+):
     """Get all users"""
     try:
         users = await db.fetch_all("""
@@ -424,35 +456,58 @@ async def get_users(db = Depends(get_db_connection)):
 
 
 @router.post("/users")
-async def create_user(user: UserInfo):
+@audit_log("create_user")
+async def create_user(
+    user: UserInfo,
+    current_user: dict = Depends(require_admin)
+):
     """Create a new user"""
     # TODO: Implement actual user creation
     return {"message": "User created successfully", "user_id": "new_id"}
 
 
 @router.put("/users/{user_id}")
-async def update_user(user_id: str, user: UserInfo):
+@audit_log("update_user")
+async def update_user(
+    user_id: str,
+    user: UserInfo,
+    current_user: dict = Depends(require_admin)
+):
     """Update user information"""
     # TODO: Implement actual user update
     return {"message": f"User {user_id} updated"}
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: str):
+@audit_log("delete_user")
+async def delete_user(
+    user_id: str,
+    current_user: dict = Depends(require_superadmin)
+):
     """Delete a user"""
     # TODO: Implement actual user deletion
     return {"message": f"User {user_id} deleted"}
 
 
 @router.put("/users/{user_id}/role")
-async def change_user_role(user_id: str, role: str):
+@audit_log("change_user_role")
+async def change_user_role(
+    user_id: str,
+    role: str,
+    current_user: dict = Depends(require_superadmin)
+):
     """Change user role"""
     # TODO: Implement actual role change
     return {"message": f"User {user_id} role changed to {role}"}
 
 
 @router.put("/users/{user_id}/status")
-async def change_user_status(user_id: str, status: str):
+@audit_log("change_user_status")
+async def change_user_status(
+    user_id: str,
+    status: str,
+    current_user: dict = Depends(require_admin)
+):
     """Change user status (active/suspended)"""
     # TODO: Implement actual status change
     return {"message": f"User {user_id} status changed to {status}"}
@@ -463,7 +518,7 @@ async def change_user_status(user_id: str, status: str):
 # ============================================================================
 
 @router.get("/settings", response_model=SystemSettings)
-async def get_settings():
+async def get_settings(current_user: dict = Depends(require_admin)):
     """Get system settings"""
     # TODO: Implement actual settings retrieval
     return {
@@ -494,7 +549,11 @@ async def get_settings():
 
 
 @router.put("/settings")
-async def update_settings(settings: SystemSettings):
+@audit_log("update_settings")
+async def update_settings(
+    settings: SystemSettings,
+    current_user: dict = Depends(require_superadmin)
+):
     """Update system settings"""
     # TODO: Implement actual settings update
     return {"message": "Settings updated successfully"}
@@ -508,7 +567,8 @@ async def update_settings(settings: SystemSettings):
 async def get_audit_logs(
     limit: int = 100,
     status: Optional[str] = None,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    current_user: dict = Depends(require_admin)
 ):
     """Get audit logs with optional filtering"""
     # TODO: Implement actual audit log retrieval
@@ -536,14 +596,17 @@ async def get_audit_logs(
 
 
 @router.post("/audit-logs")
-async def create_audit_log(log: AuditLog):
+async def create_audit_log(
+    log: AuditLog,
+    current_user: dict = Depends(require_admin)
+):
     """Create a new audit log entry"""
     # TODO: Implement actual audit log creation
     return {"message": "Audit log created", "log_id": "new_id"}
 
 
 @router.get("/audit-logs/export")
-async def export_audit_logs():
+async def export_audit_logs(current_user: dict = Depends(require_admin)):
     """Export audit logs to CSV"""
     # TODO: Implement actual export functionality
     return {"message": "Export started", "download_url": "/downloads/audit-logs.csv"}
@@ -554,7 +617,7 @@ async def export_audit_logs():
 # ============================================================================
 
 @router.get("/health")
-async def get_system_health():
+async def get_system_health(current_user: dict = Depends(require_admin)):
     """Get system health status"""
     # TODO: Implement actual health checks
     return {
@@ -571,7 +634,7 @@ async def get_system_health():
 
 
 @router.get("/metrics")
-async def get_system_metrics():
+async def get_system_metrics(current_user: dict = Depends(require_admin)):
     """Get detailed system metrics"""
     # TODO: Implement actual metrics collection
     return {
